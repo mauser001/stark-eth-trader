@@ -1,0 +1,23 @@
+{
+  "name": "trader",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "npx tsc",
+    "dev": "npm run build && node --env-file=.env dist/app.js",
+    "prod": "npm run build && node --env-file=prod.env dist/app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "typescript": "^5.4.3"
+  },
+  "dependencies": {
+    "@avnu/avnu-sdk": "^1.2.4",
+    "@ethersproject/bignumber": "^5.7.0",
+    "abi-wan-kanabi": "^2.2.1",
+    "starknet": "^6.6.6"
+  }
+}
