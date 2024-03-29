@@ -123,5 +123,5 @@ function checkQuoteEth(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | 
 }
 
 export function getFees(quote: Quote): BigNumber {
-    return BigNumber.from(quote.gasFees)
+    return BigNumber.from(quote.gasFees).add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
 }
