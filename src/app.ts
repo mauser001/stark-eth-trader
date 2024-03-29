@@ -13,11 +13,11 @@ import { SELL_PERCENT } from './conts';
 
 const useTestnet = process.env.USE_TESTNET === 'true'
 const chainId = useTestnet ? constants.StarknetChainId.SN_GOERLI : constants.StarknetChainId.SN_MAIN
-const nodeUrl = useTestnet ? constants.RPC_NODES.SN_GOERLI[0] : constants.RPC_NODES.SN_MAIN[0]
+const nodeUrl = useTestnet ? constants.RPC_GOERLI_NODES[0] : constants.RPC_MAINNET_NODES[0]
 const avnuOptions: AvnuOptions = { baseUrl: useTestnet ? 'https://goerli.api.avnu.fi' : 'https://starknet.api.avnu.fi' }
 
 async function run() {
-    console.log(`run useTestnet: ${useTestnet}, chainId: ${chainId},node url: ${constants.RPC_NODES.SN_MAIN[0]}`)
+    console.log(`run useTestnet: ${useTestnet}, chainId: ${chainId},node url: ${nodeUrl}`)
     // Get account
     const { account, provider } = await getAccount({ chainId, nodeUrl })
 

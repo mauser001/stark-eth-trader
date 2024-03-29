@@ -24,7 +24,7 @@ async function saveTransactionData(list: TxData[]): Promise<boolean> {
 }
 
 // getting the transactions from the file
-async function getTransactionData(): Promise<TxData[]> {
+export async function getTransactionData(): Promise<TxData[]> {
     return new Promise((resolve, reject) => {
         fs.readFile(dataPath, 'utf8', (err, data) => {
             if (err) {

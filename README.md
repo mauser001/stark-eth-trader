@@ -50,3 +50,7 @@ TRADE_FILE - relative path to the trading data file, make sure it exists and has
 - It then get the trading quotes from Avnu
 - If the ratio is good enough the trade is concluded
 - Then in the future if the price goes in the other direction it then tries to sell the stack back to gain coins.
+
+## Reporting
+
+Run ```script npm run report-prod ``` to get a short summary of your trades

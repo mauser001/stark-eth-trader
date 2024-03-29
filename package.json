@@ -6,7 +6,8 @@
   "scripts": {
     "build": "npx tsc",
     "dev": "npm run build && node --env-file=.env dist/app.js",
-    "prod": "npm run build && node --env-file=prod.env dist/app.js"
+    "prod": "npm run build && node --env-file=prod.env dist/app.js",
+    "report-prod": "npm run build && node --env-file=prod.env dist/reporting.js"
   },
   "keywords": [],
   "author": "",
@@ -16,8 +17,9 @@
   },
   "dependencies": {
     "@avnu/avnu-sdk": "^1.2.4",
-    "@ethersproject/bignumber": "^5.7.0",
     "abi-wan-kanabi": "^2.2.1",
-    "starknet": "^6.6.6"
+    "ethers": "^6.11.1",
+    "starknet": "^5.19.5",
+    "@ethersproject/bignumber": "^5.7.0"
   }
 }
