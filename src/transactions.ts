@@ -77,17 +77,22 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
     if (finished && !latest.balanceEth) {
         const { eth, strk } = await getBalances(provider, account)
         if (eth.toString() === "0") {
+            console.log("did not get any balances")
             return {
                 finished: false
             }
         }
-        latest.balanceEth = eth.toString()
-        latest.balanceStrk = strk.toString()
         // we get the balance difference to the last transaction to get our transaction amounts 
         if (transactions.length > 1) {
             const prev = transactions[transactions.length - 2]
             const prevEth = BigNumber.from(prev.balanceEth)
             const prevStrk = BigNumber.from(prev.balanceStrk)
+            if (prevEth.eq(eth)) {
+                console.log("no balance change so we wait")
+                return {
+                    finished: false
+                }
+            }
             if (prevEth.gt(eth)) {
                 latest.sell = 'eth'
                 latest.sellAmount = prevEth.sub(eth).toString()
@@ -98,6 +103,8 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
                 latest.buyAmount = eth.sub(prevEth).toString()
             }
         }
+        latest.balanceEth = eth.toString()
+        latest.balanceStrk = strk.toString()
         needToSave = true
     }
     if (needToSave) {

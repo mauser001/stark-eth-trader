@@ -7,7 +7,6 @@ async function getBalance(provider: RpcProvider, account: Account, address: stri
     if (testAbi === undefined) {
         throw new Error('no abi.');
     }
-    console.log("testAbi", JSON.stringify(testAbi))
     const contract = new Contract(testAbi, address, provider);
 
     const balance = await contract.balanceOf(account.address)

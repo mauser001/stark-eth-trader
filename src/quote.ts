@@ -1,8 +1,8 @@
 import { AvnuOptions, Quote, QuoteRequest, fetchQuotes } from "@avnu/avnu-sdk"
 import { BigNumber, formatFixed } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { RATIO_MULTI, TRADE_GAIN } from "./conts"
-import { checkPercentChange, getRatio } from "./math"
+import { RATIO_MULTI, TRADE_GAIN_PROMILLE } from "./conts"
+import { checkPromilleChange, getRatio } from "./math"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 
 export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData) {
@@ -50,12 +50,14 @@ function checkQuoteStrk(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData |
         tradeRatio = getRatio(sellAmount, fixedBuyAmount)
         // if there is an open tx where we sold eth then we compare the quote with it
         if (!tx.matchedBy && tx.sell === 'eth') {
-            if (checkPercentChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN)) {
+            if (checkPromilleChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN_PROMILLE)) {
                 doTrade = true
                 wasMatch = true
+            } else {
+                console.log("no strk selling against tx", tx.sellAmount.toString(), fixedBuyAmount.toString(), fees.toString())
             }
             // If not we compare the ratios 
-        } else if (ratio.gt(tradeRatio) && checkPercentChange(tradeRatio, ratio, TRADE_GAIN)) {
+        } else if (ratio.gt(tradeRatio) && checkPromilleChange(tradeRatio, ratio, TRADE_GAIN_PROMILLE)) {
             doTrade = true
         } else {
             console.log("no strk selling", ratio.toString(), tradeRatio.toString(), ratio.gt(tradeRatio))
@@ -95,12 +97,12 @@ function checkQuoteEth(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | 
         tradeRatio = getRatio(fixedBuyAmount, sellAmount)
         if (ratio.lt(tradeRatio)) {
             if (!tx.matchedBy && tx.sell === 'strk') {
-                if (checkPercentChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN)) {
+                if (checkPromilleChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN_PROMILLE)) {
                     doTrade = true
                     wasMatch = true
+                } else {
+                    console.log("no eth selling against tx", tx.sellAmount.toString(), fixedBuyAmount.toString(), fees.toString())
                 }
-            } else if (checkPercentChange(ratio, tradeRatio, TRADE_GAIN)) {
-                doTrade = true
             } else {
                 console.log("no eth selling", ratio.toString(), tradeRatio.toString())
             }
