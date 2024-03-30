@@ -1,5 +1,5 @@
 import { AvnuOptions, Quote, QuoteRequest, fetchQuotes } from "@avnu/avnu-sdk"
-import { BigNumber, formatFixed } from "@ethersproject/bignumber"
+import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
 import { RATIO_MULTI, TRADE_GAIN_PROMILLE } from "./conts"
 import { checkPromilleChange, getRatio } from "./math"
