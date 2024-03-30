@@ -39,6 +39,7 @@ function checkQuoteStrk(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData |
     // Only if the quote is good enough we make more test
     if (!ratio.gt(tradeRatio)) {
         console.log("no strk selling ratio low", ratio.toString(), tradeRatio.toString())
+        return
     }
     console.log("maybe sell strk", ratio.toString(), tradeRatio.toString())
     // Let's get the fees and make a quick check if the fees are higher then the eth we get (fees are in eth)
@@ -91,6 +92,7 @@ function checkQuoteEth(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | 
     // here the ratio must be in the oposite direction as for the strk quote
     if (!ratio.lt(tradeRatio)) {
         console.log("no eth selling ratio low", ratio.toString(), tradeRatio.toString())
+        return
     }
     console.log("maybe sell eth", ratio.toString(), tradeRatio.toString())
     // as the fees are in eth we must convert the tx fee to strk so we pass the ratio
