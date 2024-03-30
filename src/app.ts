@@ -58,7 +58,7 @@ async function run() {
             tx.matchedBy = response.transactionHash
             matchedBy = tx.hash
         }
-        await addTransaction({ hash: response.transactionHash, sell: quote.sell, matchedBy }, quote.wasMatch ? tx.hash : undefined)
+        await addTransaction({ hash: response.transactionHash, sell: quote.sell, matchedBy, timestamp: Date.now() }, quote.wasMatch ? tx.hash : undefined)
     }
 }
 
@@ -68,7 +68,7 @@ async function loop() {
     } catch (e) {
         console.log('run failed', e)
     }
-    setTimeout(loop, 30000)
+    setTimeout(() => loop(), 30000)
 }
 
 loop()

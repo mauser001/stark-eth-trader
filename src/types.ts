@@ -12,6 +12,7 @@ export type TxData = {
     buyAmount?: string,
     balanceEth?: string,
     balanceStrk?: string,
+    timestamp?: number
 }
 
 export type QuoteData = {
