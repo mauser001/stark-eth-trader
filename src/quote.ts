@@ -37,33 +37,37 @@ function checkQuoteStrk(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData |
     let wasMatch = false
     console.log('quote strk', buyAmount.toString(), sellAmount.toString(), tradeRatio.toString())
     // Only if the quote is good enough we make more test
-    if (ratio.gt(tradeRatio)) {
-        console.log("maybe sell strk", ratio.toString(), tradeRatio.toString())
-        // Let's get the fees and make a quick check if the fees are higher then the eth we get (fees are in eth)
-        const fees = getFees(quote)
-        if (fees.gte(buyAmount)) {
-            console.log("sell strk, fees greater then buy amount", fees.toString(), buyAmount.toString())
-            return
-        }
-        // Deduct the fees from the amount we get to calculate the real ratio we get
-        const fixedBuyAmount = buyAmount.sub(fees)
-        tradeRatio = getRatio(sellAmount, fixedBuyAmount)
-        // if there is an open tx where we sold eth then we compare the quote with it
-        if (!tx.matchedBy && tx.sell === 'eth') {
-            if (checkPromilleChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN_PROMILLE)) {
-                doTrade = true
-                wasMatch = true
-            } else {
-                console.log("no strk selling against tx", tx.sellAmount.toString(), fixedBuyAmount.toString(), fees.toString())
-            }
-            // If not we compare the ratios 
-        } else if (ratio.gt(tradeRatio) && checkPromilleChange(tradeRatio, ratio, TRADE_GAIN_PROMILLE)) {
-            doTrade = true
-        } else {
-            console.log("no strk selling", ratio.toString(), tradeRatio.toString(), ratio.gt(tradeRatio))
-        }
-    } else {
+    if (!ratio.gt(tradeRatio)) {
         console.log("no strk selling ratio low", ratio.toString(), tradeRatio.toString())
+    }
+    console.log("maybe sell strk", ratio.toString(), tradeRatio.toString())
+    // Let's get the fees and make a quick check if the fees are higher then the eth we get (fees are in eth)
+    const fees = getFees(quote)
+    if (fees.gte(buyAmount)) {
+        console.log("sell strk, fees greater then buy amount", fees.toString(), buyAmount.toString())
+        return
+    }
+    // Deduct the fees from the amount we get to calculate the real ratio we get
+    const fixedBuyAmount = buyAmount.sub(fees)
+    tradeRatio = getRatio(sellAmount, fixedBuyAmount)
+
+    if (!ratio.gt(tradeRatio)) {
+        console.log("sell strk, ratio is worse after fee", tradeRatio.toString(), buyAmount.toString(), fees.toString())
+        return
+    }
+    // if there is an open tx where we sold eth then we compare the quote with it
+    if (!tx.matchedBy && tx.sell === 'eth') {
+        if (checkPromilleChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN_PROMILLE)) {
+            doTrade = true
+            wasMatch = true
+        } else {
+            console.log("no strk selling against tx", tx.sellAmount.toString(), fixedBuyAmount.toString(), fees.toString())
+        }
+        // If not we compare the ratios 
+    } else if (ratio.gt(tradeRatio) && checkPromilleChange(tradeRatio, ratio, TRADE_GAIN_PROMILLE)) {
+        doTrade = true
+    } else {
+        console.log("no strk selling", ratio.toString(), tradeRatio.toString(), ratio.gt(tradeRatio))
     }
     if (doTrade) {
         return {
@@ -85,32 +89,33 @@ function checkQuoteEth(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | 
     let wasMatch = false
     console.log('quote eth', buyAmount.toString(), sellAmount.toString(), tradeRatio.toString())
     // here the ratio must be in the oposite direction as for the strk quote
-    if (ratio.lt(tradeRatio)) {
-        console.log("maybe sell eth", ratio.toString(), tradeRatio.toString())
-        // as the fees are in eth we must convert it to strk to compare it to the strk we get
-        const fees = getFees(quote).mul(tradeRatio).div(RATIO_MULTI)
-        if (fees.gte(buyAmount)) {
-            console.log("sell eth, fees greater then buy amount", fees.toString(), buyAmount.toString())
-            return
-        }
-        const fixedBuyAmount = buyAmount.sub(fees)
-        tradeRatio = getRatio(fixedBuyAmount, sellAmount)
-        if (ratio.lt(tradeRatio)) {
-            if (!tx.matchedBy && tx.sell === 'strk') {
-                if (checkPromilleChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN_PROMILLE)) {
-                    doTrade = true
-                    wasMatch = true
-                } else {
-                    console.log("no eth selling against tx", tx.sellAmount.toString(), fixedBuyAmount.toString(), fees.toString())
-                }
-            } else {
-                console.log("no eth selling", ratio.toString(), tradeRatio.toString())
-            }
-        } else {
-            console.log("no eth selling ratio after fees too low", ratio.toString(), tradeRatio.toString())
-        }
-    } else {
+    if (!ratio.lt(tradeRatio)) {
         console.log("no eth selling ratio low", ratio.toString(), tradeRatio.toString())
+    }
+    console.log("maybe sell eth", ratio.toString(), tradeRatio.toString())
+    // as the fees are in eth we must convert the tx fee to strk so we pass the ratio
+    const fees = getFees(quote, ratio)
+    if (fees.gte(buyAmount)) {
+        console.log("sell eth, fees greater then buy amount", fees.toString(), buyAmount.toString())
+        return
+    }
+    const fixedBuyAmount = buyAmount.sub(fees)
+    tradeRatio = getRatio(fixedBuyAmount, sellAmount)
+    if (!ratio.lt(tradeRatio)) {
+        console.log("no eth selling ratio is worse after fees", ratio.toString(), tradeRatio.toString(), fees.toString())
+        return
+    }
+    if (!tx.matchedBy && tx.sell === 'strk') {
+        if (checkPromilleChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN_PROMILLE)) {
+            doTrade = true
+            wasMatch = true
+        } else {
+            console.log("no eth selling against tx", tx.sellAmount.toString(), fixedBuyAmount.toString(), fees.toString())
+        }
+    } else if (checkPromilleChange(ratio, tradeRatio, TRADE_GAIN_PROMILLE)) {
+        doTrade = true
+    } else {
+        console.log("no eth selling", ratio.toString(), tradeRatio.toString())
     }
     if (doTrade) {
         return {
@@ -122,6 +127,7 @@ function checkQuoteEth(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | 
     }
 }
 
-export function getFees(quote: Quote): BigNumber {
-    return BigNumber.from(quote.gasFees).add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
+function getFees(quote: Quote, ratio?: BigNumber): BigNumber {
+    const baseFee = ratio ? BigNumber.from(quote.gasFees).mul(ratio).div(RATIO_MULTI) : BigNumber.from(quote.gasFees)
+    return baseFee.add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
 }
