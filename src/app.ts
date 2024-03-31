@@ -17,7 +17,7 @@ const nodeUrl = useTestnet ? constants.RPC_GOERLI_NODES[0] : constants.RPC_MAINN
 const avnuOptions: AvnuOptions = { baseUrl: useTestnet ? 'https://goerli.api.avnu.fi' : 'https://starknet.api.avnu.fi' }
 
 async function run() {
-    console.log(`run useTestnet: ${useTestnet}, chainId: ${chainId},node url: ${nodeUrl}`)
+    console.log(`${new Date().toLocaleString()} run useTestnet: ${useTestnet}, chainId: ${chainId},node url: ${nodeUrl}`)
     // Get account
     const { account, provider } = await getAccount({ chainId, nodeUrl })
 
