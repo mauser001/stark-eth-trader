@@ -4,6 +4,7 @@ import { Account } from "starknet"
 import { RATIO_MULTI, TRADE_GAIN_PROMILLE } from "./conts"
 import { checkPromilleChange, getRatio } from "./math"
 import { EthOrStrk, QuoteData, TxData } from "./types"
+import { Router as FibrousRouter } from "fibrous-router-sdk";
 
 export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData) {
     const params: QuoteRequest = {
@@ -18,32 +19,63 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
     let quote: QuoteData
     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
     quotes.forEach((q) => {
-        const data = sell === 'eth' ? checkQuoteEth(q, quote?.ratio || ratio, tx) : checkQuoteStrk(q, quote?.ratio || ratio, tx)
+        const buyAmount = BigNumber.from(q.buyAmount)
+        const sellAmount = BigNumber.from(q.sellAmount)
+        const fees = getFees(q, sell === 'eth' ? ratio : undefined)
+
+        const data = sell === 'eth' ? checkQuoteEth(buyAmount, sellAmount, fees, quote?.ratio || ratio, tx) : checkQuoteStrk(buyAmount, sellAmount, fees, quote?.ratio || ratio, tx)
         if (data) {
-            quote = data
+            console.log('Oh we found a Anvu quote: ', q.buyAmount.toString(), q.sellAmount.toString())
+            quote = {
+                ...data,
+                quote: q
+            }
         }
     })
+
+    const router = new FibrousRouter()
+    const route = await router.getBestRoute(
+        sellAmount, // amount
+        params.sellTokenAddress, // token input
+        params.buyTokenAddress, // token output
+    );
+    if (route?.success) {
+        console.log('now lets try the route')
+        const buyAmount = BigNumber.from(route.outputAmount) //.div(100).mul(95) // remove 5%
+        const sellAmount = BigNumber.from(route.inputAmount)
+        let fees = route.estimatedGasUsed !== '0' ? BigNumber.from(route.estimatedGasUsed) : BigNumber.from("597025749208788") // 1 STRK in ETh ... should be enough, but we can't get a an estimate from teh route
+        if (sell === 'eth') {
+            fees = fees.mul(ratio).div(RATIO_MULTI)
+        }
+        console.log('now lets test the fibrous route')
+        const data = sell === 'eth' ? checkQuoteEth(buyAmount, sellAmount, fees, quote?.ratio || ratio, tx) : checkQuoteStrk(buyAmount, sellAmount, fees, quote?.ratio || ratio, tx)
+
+        if (data) {
+            console.log('we found a better route with fibrous')
+            quote = {
+                ...data,
+                route
+            }
+        }
+    }
     return quote
 }
 
 // check the quote for selling Strk 
-function checkQuoteStrk(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | undefined {
-    const buyAmount = BigNumber.from(quote.buyAmount)
-    const sellAmount = BigNumber.from(quote.sellAmount)
+function checkQuoteStrk(buyAmount: BigNumber, sellAmount: BigNumber, fees: BigNumber, ratio: BigNumber, tx: TxData): QuoteData | undefined {
     // calculate the ratio of the quote
     let tradeRatio = getRatio(sellAmount, buyAmount)
 
     let doTrade = false
     let wasMatch = false
-    console.log('quote strk', buyAmount.toString(), sellAmount.toString(), tradeRatio.toString())
+    console.log('quote strk', buyAmount.toString(), sellAmount.toString(), tradeRatio.toString(), fees.toString())
     // Only if the quote is good enough we make more test
     if (!ratio.gt(tradeRatio)) {
         console.log("no strk selling ratio low", ratio.toString(), tradeRatio.toString())
         return
     }
     console.log("maybe sell strk", ratio.toString(), tradeRatio.toString())
-    // Let's get the fees and make a quick check if the fees are higher then the eth we get (fees are in eth)
-    const fees = getFees(quote)
+    // Let's check the fees
     if (fees.gte(buyAmount)) {
         console.log("sell strk, fees greater then buy amount", fees.toString(), buyAmount.toString())
         return
@@ -72,7 +104,6 @@ function checkQuoteStrk(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData |
     }
     if (doTrade) {
         return {
-            quote,
             ratio: tradeRatio,
             wasMatch,
             sell: 'strk'
@@ -81,22 +112,19 @@ function checkQuoteStrk(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData |
 }
 
 // check the quote for selling eth 
-function checkQuoteEth(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | undefined {
-    const buyAmount = BigNumber.from(quote.buyAmount)
-    const sellAmount = BigNumber.from(quote.sellAmount)
+function checkQuoteEth(buyAmount: BigNumber, sellAmount: BigNumber, fees: BigNumber, ratio: BigNumber, tx: TxData): QuoteData | undefined {
     let tradeRatio = getRatio(buyAmount, sellAmount)
 
     let doTrade = false
     let wasMatch = false
-    console.log('quote eth', buyAmount.toString(), sellAmount.toString(), tradeRatio.toString())
+    console.log('quote eth', buyAmount.toString(), sellAmount.toString(), tradeRatio.toString(), fees.toString())
     // here the ratio must be in the oposite direction as for the strk quote
     if (!ratio.lt(tradeRatio)) {
         console.log("no eth selling ratio low", ratio.toString(), tradeRatio.toString())
         return
     }
     console.log("maybe sell eth", ratio.toString(), tradeRatio.toString())
-    // as the fees are in eth we must convert the tx fee to strk so we pass the ratio
-    const fees = getFees(quote, ratio)
+    // let's check the fees
     if (fees.gte(buyAmount)) {
         console.log("sell eth, fees greater then buy amount", fees.toString(), buyAmount.toString())
         return
@@ -121,7 +149,6 @@ function checkQuoteEth(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | 
     }
     if (doTrade) {
         return {
-            quote,
             ratio: tradeRatio,
             wasMatch,
             sell: 'eth'

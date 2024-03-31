@@ -3,13 +3,15 @@ import {
     InvokeSwapResponse,
     executeSwap,
 } from '@avnu/avnu-sdk';
-import { constants } from 'starknet'
+import { Call, constants } from 'starknet'
 import { getQuote } from './quote';
 import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
 import { addTransaction, checkTransactions } from './transactions';
 import { getRatio } from './math';
 import { SELL_PERCENT } from './conts';
+import { Aggregator } from './types';
+import { Router as FibrousRouter } from "fibrous-router-sdk";
 
 const useTestnet = process.env.USE_TESTNET === 'true'
 const chainId = useTestnet ? constants.StarknetChainId.SN_GOERLI : constants.StarknetChainId.SN_MAIN
@@ -50,15 +52,46 @@ async function run() {
     }
 
     if (quote) {
-        console.log("We found a good trade matching an open tx=", quote.wasMatch, BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
-        const response: InvokeSwapResponse = await executeSwap(account, quote.quote, { executeApprove: true }, avnuOptions)
-        console.log("tx has of new trade: ", response.transactionHash)
+        const aggregator: Aggregator = quote.quote ? 'Avnu' : 'Fibrous'
+        console.log(`We found a good trade as ${aggregator}, matching an open tx=${quote.wasMatch}, sellAmount: ${BigNumber.from(quote.quote?.sellAmount || quote.route?.inputAmount).toString()}, buyAmount: ${BigNumber.from(quote.quote?.buyAmount || quote.route?.outputAmount).toString()}, fees: ${BigNumber.from(quote.quote?.gasFees || quote.route?.estimatedGasUsed).toString()}`)
+
+        let transactionHash: string
+        if (quote.quote) {
+            const response: InvokeSwapResponse = await executeSwap(account, quote.quote, { executeApprove: true }, avnuOptions)
+            transactionHash = response.transactionHash
+        } else {
+            const slippage = 0.01; // %1 slippage
+
+            const router = new FibrousRouter()
+
+            const approveCall: Call = await router.buildApprove(
+                BigNumber.from(quote.route.inputAmount),
+                quote.route.inputToken.address,
+            );
+
+            const swapCall: Call = await router.buildTransaction(
+                BigNumber.from(quote.route.inputAmount),
+                quote.route.inputToken.address,
+                quote.route.outputToken.address,
+                slippage,
+                account.address
+            );
+
+            const result = await account.execute([approveCall, swapCall]);
+            transactionHash = result.transaction_hash
+        }
+
+        if (!transactionHash) {
+            console.log('something went wrong with the transaction')
+            return
+        }
+        console.log(`trade  transactionHash ${transactionHash}`)
         let matchedBy: string
         if (quote.wasMatch) {
-            tx.matchedBy = response.transactionHash
+            tx.matchedBy = transactionHash
             matchedBy = tx.hash
         }
-        await addTransaction({ hash: response.transactionHash, sell: quote.sell, matchedBy, timestamp: Date.now() }, quote.wasMatch ? tx.hash : undefined)
+        await addTransaction({ hash: transactionHash, aggregator, sell: quote.sell, matchedBy, timestamp: Date.now() }, quote.wasMatch ? tx.hash : undefined)
     }
 }
 

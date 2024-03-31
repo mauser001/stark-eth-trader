@@ -17,9 +17,10 @@
   },
   "dependencies": {
     "@avnu/avnu-sdk": "^1.2.4",
+    "@ethersproject/bignumber": "^5.7.0",
     "abi-wan-kanabi": "^2.2.1",
     "ethers": "^6.11.1",
-    "starknet": "^5.19.5",
-    "@ethersproject/bignumber": "^5.7.0"
+    "fibrous-router-sdk": "^0.3.5",
+    "starknet": "^5.19.5"
   }
 }
