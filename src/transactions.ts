@@ -41,12 +41,13 @@ export async function getTransactionData(): Promise<TxData[]> {
 }
 
 // adding a transaction to the transactions file
-export async function addTransaction(tx: TxData, matchForTx?: string) {
+export async function addTransaction(tx: TxData, matchedTx?: string[]) {
     const transactions = await getTransactionData()
-    const prev = transactions.find((t) => matchForTx && t.hash === matchForTx)
-    if (prev) {
-        prev.matchedBy = tx.hash
-    }
+    transactions.forEach((t) => {
+        if (matchedTx?.includes(t.hash)) {
+            t.matchedBy = tx.hash
+        }
+    })
     transactions.push(tx)
     await saveTransactionData(transactions)
 }
@@ -125,6 +126,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
 
     return {
         finished,
-        tx
+        tx,
+        unMatched: transactions.filter((t) => !t.matchedBy)
     }
 }

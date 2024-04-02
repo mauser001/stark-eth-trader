@@ -22,7 +22,7 @@ async function run() {
     const { account, provider } = await getAccount({ chainId, nodeUrl })
 
     // First let's get the latest transactions
-    const { finished, tx } = await checkTransactions(provider, account)
+    const { finished, tx, unMatched } = await checkTransactions(provider, account)
     if (!finished || !tx) {
         return
     }
@@ -42,23 +42,22 @@ async function run() {
 
     // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell e defined percentage
     const sellStrk = !tx.matchedBy && tx.sell === 'eth' ? BigNumber.from(tx.buyAmount) : BigNumber.from(tx.balanceStrk).div(SELL_PERCENT)
-    let quote = await getQuote('strk', sellStrk, account, avnuOptions, ratio, tx)
-    if (!quote) {
+    let quote = await getQuote('strk', sellStrk, account, avnuOptions, ratio, tx, unMatched)
+    if (!quote?.quote) {
         // if we don't find a good quote for eth we try to get strk for a good price
         const sellEth = !tx.matchedBy && tx.sell === 'strk' ? BigNumber.from(tx.buyAmount) : BigNumber.from(tx.balanceEth).div(SELL_PERCENT)
-        quote = await getQuote('eth', sellEth, account, avnuOptions, ratio, tx)
+        quote = await getQuote('eth', sellEth, account, avnuOptions, ratio, tx, unMatched)
     }
 
-    if (quote) {
-        console.log("We found a good trade matching an open tx=", quote.wasMatch, BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
+    if (quote?.quote) {
+        console.log("We found a good trade matching: ", quote.matchedTx?.join(","), BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
         const response: InvokeSwapResponse = await executeSwap(account, quote.quote, { executeApprove: true }, avnuOptions)
         console.log("tx has of new trade: ", response.transactionHash)
         let matchedBy: string
-        if (quote.wasMatch) {
-            tx.matchedBy = response.transactionHash
-            matchedBy = tx.hash
+        if (quote.wasMatch && quote.matchedTx.length) {
+            matchedBy = quote.matchedTx[0]
         }
-        await addTransaction({ hash: response.transactionHash, sell: quote.sell, matchedBy, timestamp: Date.now() }, quote.wasMatch ? tx.hash : undefined)
+        await addTransaction({ hash: response.transactionHash, sell: quote.sell, matchedBy, timestamp: Date.now() }, quote.matchedTx)
     }
 }
 

@@ -16,8 +16,9 @@ export type TxData = {
 }
 
 export type QuoteData = {
-    quote: Quote,
+    quote?: Quote,
     ratio: BigNumber,
-    wasMatch: boolean,
-    sell: EthOrStrk,
+    wasMatch?: boolean,
+    matchedTx?: string[],
+    sell?: EthOrStrk,
 }

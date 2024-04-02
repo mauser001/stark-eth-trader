@@ -5,7 +5,7 @@ import { RATIO_MULTI, TRADE_GAIN_PROMILLE } from "./conts"
 import { checkPromilleChange, getRatio } from "./math"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 
-export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData) {
+export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched?: TxData[]) {
     const params: QuoteRequest = {
         size: 5,
         sellTokenAddress: sell === 'eth' ? process.env.ETH_TOKEN : process.env.STARK_TOKEN,
@@ -14,61 +14,120 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
         takerAddress: account.address
     }
     // We get the quotes for the amount we want to sell and then check if we make enough profit
-    const quotes: Quote[] = await fetchQuotes(params, avnuOptions)
+    const quotes: Quote[] = await getAvnuQuotes(sell, sellAmount, account.address, avnuOptions)
     let quote: QuoteData
     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
     quotes.forEach((q) => {
-        const data = sell === 'eth' ? checkQuoteEth(q, quote?.ratio || ratio, tx) : checkQuoteStrk(q, quote?.ratio || ratio, tx)
+        const data = checkQuote(sell, q, quote?.ratio || ratio, tx)
         if (data) {
             quote = data
+            if (quote.wasMatch) {
+                quote.matchedTx = [tx.hash]
+            }
         }
     })
+    if (quote?.ratio && !quote.quote) {
+        // we get here if the quote was good but not was not good enough (after fees)
+        // so we try to find other transactions that are better then the ratio and add them up so save on tx fees an look if it works
+        let newSellAmount = BigNumber.from("0")
+        let newBuyAmount = BigNumber.from("0")
+        const matchedTx: string[] = []
+        for (let i = unMatched.length - 1; i >= 0; i--) {
+            const testTx = unMatched[i]
+            if (testTx.sell !== sell) {
+                const testRatio = getTxRatio(testTx.sell, BigNumber.from(testTx.sellAmount), BigNumber.from(testTx.buyAmount))
+                console.log('tx isGoodRatio', sell, quote.ratio.toString(), testRatio.toString(), isGoodRatio(sell, quote.ratio, testRatio))
+                if (!isGoodRatio(sell, quote.ratio, testRatio)) {
+                    break
+                }
+                newSellAmount = newSellAmount.add(BigNumber.from(testTx.sellAmount))
+                newBuyAmount = newBuyAmount.add(BigNumber.from(testTx.buyAmount))
+                matchedTx.push(testTx.hash)
+            }
+        }
+        if (matchedTx.length > 1) {
+            console.log(`we found ${matchedTx.length} tx to combine`)
+            const quotes: Quote[] = await getAvnuQuotes(sell, newSellAmount, account.address, avnuOptions)
+            const txSell = sell === 'eth' ? 'strk' : 'eth'
+            const testTx: TxData = {
+                sellAmount: newSellAmount.toString(),
+                buyAmount: newBuyAmount.toString(),
+                sell: txSell,
+                hash: 'combined'
+            }
+            let testRatio = getTxRatio(txSell, newSellAmount, newBuyAmount)
+            // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
+            quotes.forEach((q) => {
+                const data = checkQuote(sell, q, testRatio, testTx)
+                if (data?.quote) {
+                    quote = { ...data, matchedTx }
+                    testRatio = quote.ratio
+                }
+            })
+        } else {
+            console.log(`no new tx's found for selling ${sell}`)
+        }
+    }
     return quote
 }
 
-// check the quote for selling Strk 
-function checkQuoteStrk(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | undefined {
+// check the quote for selling 
+function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | undefined {
     const buyAmount = BigNumber.from(quote.buyAmount)
     const sellAmount = BigNumber.from(quote.sellAmount)
     // calculate the ratio of the quote
-    let tradeRatio = getRatio(sellAmount, buyAmount)
+    const originTradeRatio = getTxRatio(sell, sellAmount, buyAmount)
+    let tradeRatio = originTradeRatio
 
     let doTrade = false
     let wasMatch = false
-    console.log('quote strk', buyAmount.toString(), sellAmount.toString(), tradeRatio.toString())
+    console.log(`check quote for ${sell}, sell: ${sellAmount.toString()}, buy: ${buyAmount.toString()} -> ratio: ${tradeRatio.toString()}`)
     // Only if the quote is good enough we make more test
-    if (!ratio.gt(tradeRatio)) {
-        console.log("no strk selling ratio low", ratio.toString(), tradeRatio.toString())
+    if (!isGoodRatio(sell, ratio, tradeRatio)) {
+        console.log(`no selling ${sell} because ratio is to low target: ${ratio.toString()}, trade: ${tradeRatio.toString()}`)
         return
     }
-    console.log("maybe sell strk", ratio.toString(), tradeRatio.toString())
+    console.log(`maybe ${sell} because ratio is ok target: ${ratio.toString()}, trade: ${tradeRatio.toString()}`)
     // Let's get the fees and make a quick check if the fees are higher then the eth we get (fees are in eth)
-    const fees = getFees(quote)
+    const fees = getFees(sell, quote, ratio)
     if (fees.gte(buyAmount)) {
-        console.log("sell strk, fees greater then buy amount", fees.toString(), buyAmount.toString())
+        console.log(`no selling ${sell} because fees to high: ${fees.toString()}`)
+        if (!tx.matchedBy && tx.sell !== sell) {
+            return {
+                ratio: originTradeRatio
+            }
+        }
         return
     }
     // Deduct the fees from the amount we get to calculate the real ratio we get
     const fixedBuyAmount = buyAmount.sub(fees)
-    tradeRatio = getRatio(sellAmount, fixedBuyAmount)
+    tradeRatio = getTxRatio(sell, sellAmount, fixedBuyAmount)
 
-    if (!ratio.gt(tradeRatio)) {
-        console.log("sell strk, ratio is worse after fee", tradeRatio.toString(), buyAmount.toString(), fees.toString())
+    if (!isGoodRatio(sell, ratio, tradeRatio)) {
+        console.log(`no selling ${sell} because ratio is to low after fees trade ratio: ${tradeRatio.toString()} for fixed amount ${fixedBuyAmount.toString()}`)
+        if (!tx.matchedBy && tx.sell !== sell) {
+            return {
+                ratio: originTradeRatio
+            }
+        }
         return
     }
     // if there is an open tx where we sold eth then we compare the quote with it
-    if (!tx.matchedBy && tx.sell === 'eth') {
+    if (!tx.matchedBy && tx.sell !== sell) {
         if (checkPromilleChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN_PROMILLE)) {
             doTrade = true
             wasMatch = true
         } else {
-            console.log("no strk selling against tx", tx.sellAmount.toString(), fixedBuyAmount.toString(), fees.toString())
+            console.log(`no selling ${sell} against tx sell amount: ${tx.sellAmount.toString()} vs. buy ${fixedBuyAmount.toString()} with fees: ${fees.toString()}`)
+            return {
+                ratio: originTradeRatio
+            }
         }
         // If not we compare the ratios 
-    } else if (ratio.gt(tradeRatio) && checkPromilleChange(tradeRatio, ratio, TRADE_GAIN_PROMILLE)) {
+    } else if (isGoodRatio(sell, ratio, tradeRatio) && checkTxRatioGain(sell, tradeRatio, ratio)) {
         doTrade = true
     } else {
-        console.log("no strk selling", ratio.toString(), tradeRatio.toString(), ratio.gt(tradeRatio))
+        console.log(`no selling ${sell} as trade is not good enough ratio: ${ratio.toString()}, trade ratio: ${tradeRatio.toString()}`)
     }
     if (doTrade) {
         return {
@@ -80,56 +139,33 @@ function checkQuoteStrk(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData |
     }
 }
 
-// check the quote for selling eth 
-function checkQuoteEth(quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | undefined {
-    const buyAmount = BigNumber.from(quote.buyAmount)
-    const sellAmount = BigNumber.from(quote.sellAmount)
-    let tradeRatio = getRatio(buyAmount, sellAmount)
-
-    let doTrade = false
-    let wasMatch = false
-    console.log('quote eth', buyAmount.toString(), sellAmount.toString(), tradeRatio.toString())
-    // here the ratio must be in the oposite direction as for the strk quote
-    if (!ratio.lt(tradeRatio)) {
-        console.log("no eth selling ratio low", ratio.toString(), tradeRatio.toString())
-        return
-    }
-    console.log("maybe sell eth", ratio.toString(), tradeRatio.toString())
-    // as the fees are in eth we must convert the tx fee to strk so we pass the ratio
-    const fees = getFees(quote, ratio)
-    if (fees.gte(buyAmount)) {
-        console.log("sell eth, fees greater then buy amount", fees.toString(), buyAmount.toString())
-        return
-    }
-    const fixedBuyAmount = buyAmount.sub(fees)
-    tradeRatio = getRatio(fixedBuyAmount, sellAmount)
-    if (!ratio.lt(tradeRatio)) {
-        console.log("no eth selling ratio is worse after fees", ratio.toString(), tradeRatio.toString(), fees.toString())
-        return
-    }
-    if (!tx.matchedBy && tx.sell === 'strk') {
-        if (checkPromilleChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN_PROMILLE)) {
-            doTrade = true
-            wasMatch = true
-        } else {
-            console.log("no eth selling against tx", tx.sellAmount.toString(), fixedBuyAmount.toString(), fees.toString())
-        }
-    } else if (checkPromilleChange(ratio, tradeRatio, TRADE_GAIN_PROMILLE)) {
-        doTrade = true
-    } else {
-        console.log("no eth selling", ratio.toString(), tradeRatio.toString())
-    }
-    if (doTrade) {
-        return {
-            quote,
-            ratio: tradeRatio,
-            wasMatch,
-            sell: 'eth'
-        }
-    }
+function getTxRatio(sell: EthOrStrk, sellAmount: BigNumber, buyAmount: BigNumber) {
+    return sell === 'eth' ? getRatio(buyAmount, sellAmount) : getRatio(sellAmount, buyAmount)
 }
 
-function getFees(quote: Quote, ratio?: BigNumber): BigNumber {
-    const baseFee = ratio ? BigNumber.from(quote.gasFees).mul(ratio).div(RATIO_MULTI) : BigNumber.from(quote.gasFees)
+function isGoodRatio(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNumber) {
+    return sell === 'eth' ? targetRatio.lt(tradeRatio) : targetRatio.gt(tradeRatio)
+}
+
+function checkTxRatioGain(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNumber) {
+    return sell === 'eth' ? checkPromilleChange(targetRatio, tradeRatio, TRADE_GAIN_PROMILLE) : checkPromilleChange(tradeRatio, targetRatio, TRADE_GAIN_PROMILLE)
+
+}
+
+function getFees(sell: EthOrStrk, quote: Quote, ratio?: BigNumber): BigNumber {
+    const baseFee = sell === 'eth' ? BigNumber.from(quote.gasFees).mul(ratio).div(RATIO_MULTI) : BigNumber.from(quote.gasFees)
+    console.log(`baseFee: ${baseFee}, quote.avnuFees:${quote.avnuFees}, quote.integratorFees: ${quote.integratorFees}`)
     return baseFee.add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
+}
+
+async function getAvnuQuotes(sell: EthOrStrk, sellAmount: BigNumber, takerAddress: string, avnuOptions: AvnuOptions) {
+    const params: QuoteRequest = {
+        size: 5,
+        sellTokenAddress: sell === 'eth' ? process.env.ETH_TOKEN : process.env.STARK_TOKEN,
+        buyTokenAddress: sell !== 'eth' ? process.env.ETH_TOKEN : process.env.STARK_TOKEN,
+        sellAmount: BigInt(sellAmount.toString()),
+        takerAddress: takerAddress
+    }
+    // We get the quotes for the amount we want to sell and then check if we make enough profit
+    return await fetchQuotes(params, avnuOptions)
 }
