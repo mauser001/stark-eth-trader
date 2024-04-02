@@ -36,10 +36,12 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
             const testTx = unMatched[i]
             if (testTx.sell !== sell) {
                 const testRatio = getTxRatio(testTx.sell, BigNumber.from(testTx.sellAmount), BigNumber.from(testTx.buyAmount))
-                console.log('tx isGoodRatio', sell, quote.ratio.toString(), testRatio.toString(), isGoodRatio(sell, quote.ratio, testRatio))
-                if (!isGoodRatio(sell, quote.ratio, testRatio)) {
+                if (!isGoodRatio(sell, testRatio, quote.ratio)) {
+                    console.log(' tx has not a good ratio', sell, testTx.sellAmount, testTx.buyAmount, quote.ratio.toString(), testRatio.toString())
                     break
                 }
+                console.log('tx has a good ratio', sell, testTx.sellAmount, testTx.buyAmount, quote.ratio.toString(), testRatio.toString())
+
                 newSellAmount = newSellAmount.add(BigNumber.from(testTx.sellAmount))
                 newBuyAmount = newBuyAmount.add(BigNumber.from(testTx.buyAmount))
                 matchedTx.push(testTx.hash)
