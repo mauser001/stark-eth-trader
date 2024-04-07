@@ -150,7 +150,7 @@ function isGoodRatio(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNum
 }
 
 function checkTxRatioGain(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNumber) {
-    return sell === 'eth' ? checkPromilleChange(targetRatio, tradeRatio, TRADE_GAIN_PROMILLE) : checkPromilleChange(tradeRatio, targetRatio, TRADE_GAIN_PROMILLE)
+    return sell === 'strk' ? checkPromilleChange(targetRatio, tradeRatio, TRADE_GAIN_PROMILLE) : checkPromilleChange(tradeRatio, targetRatio, TRADE_GAIN_PROMILLE)
 
 }
 
