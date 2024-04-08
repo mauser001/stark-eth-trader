@@ -11,3 +11,12 @@ export function checkPromilleChange(origin: BigNumber, newValue: BigNumber, min:
 export function getRatio(strk: BigNumber, eth: BigNumber) {
     return strk.mul(RATIO_MULTI).div(eth)
 }
+
+export function applyRatio(ratio: BigNumber, strk?: BigNumber, eth?: BigNumber) {
+    if (strk) {
+        return strk.mul(RATIO_MULTI).div(ratio)
+    }
+    if (eth) {
+        return eth.mul(ratio).div(RATIO_MULTI)
+    }
+}

@@ -1,9 +1,9 @@
 import { AvnuOptions, Quote, QuoteRequest, fetchQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { RATIO_MULTI, TRADE_GAIN_PROMILLE } from "./conts"
-import { checkPromilleChange, getRatio } from "./math"
+import { MIN_GAIN_ETH, MIN_GAIN_STRK, RATIO_MULTI } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
+import { applyRatio, getRatio } from "./math"
 
 export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched?: TxData[]) {
     const params: QuoteRequest = {
@@ -106,7 +106,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData)
     tradeRatio = getTxRatio(sell, sellAmount, fixedBuyAmount)
 
     if (!isGoodRatio(sell, ratio, tradeRatio)) {
-        console.log(`no selling ${sell} because ratio is to low after fees trade ratio: ${tradeRatio.toString()} for fixed amount ${fixedBuyAmount.toString()}`)
+        console.log(`no selling ${sell} because trade is not good enough for fixed amount ${fixedBuyAmount.toString()}`)
         if (!tx.matchedBy && tx.sell !== sell) {
             return {
                 ratio: originTradeRatio
@@ -116,7 +116,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData)
     }
     // if there is an open tx where we sold eth then we compare the quote with it
     if (!tx.matchedBy && tx.sell !== sell) {
-        if (checkPromilleChange(BigNumber.from(tx.sellAmount), fixedBuyAmount, TRADE_GAIN_PROMILLE)) {
+        if (checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount)) {
             doTrade = true
             wasMatch = true
         } else {
@@ -126,19 +126,26 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData)
             }
         }
         // If not we compare the ratios 
-    } else if (isGoodRatio(sell, ratio, tradeRatio) && checkTxRatioGain(sell, tradeRatio, ratio)) {
-        doTrade = true
     } else {
-        console.log(`no selling ${sell} as trade is not good enough ratio: ${ratio.toString()}, trade ratio: ${tradeRatio.toString()}`)
+        const fixedSellAmount = applyTxRatio(sell, sellAmount, ratio)
+        if (fixedSellAmount && checkTxGain(sell, fixedSellAmount, fixedBuyAmount)) {
+            doTrade = true
+        } else {
+            console.log(`no selling ${sell} as trade is not good enough fixes sell amount: ${fixedSellAmount?.toString()},  fixed trade amount: ${fixedBuyAmount.toString()}, div: ${fixedBuyAmount.sub(fixedSellAmount).toString()}`)
+        }
     }
     if (doTrade) {
         return {
             quote,
             ratio: tradeRatio,
             wasMatch,
-            sell: 'strk'
+            sell
         }
     }
+}
+
+function getMinGain(sell: EthOrStrk) {
+    return sell === 'eth' ? MIN_GAIN_STRK : MIN_GAIN_ETH
 }
 
 function getTxRatio(sell: EthOrStrk, sellAmount: BigNumber, buyAmount: BigNumber) {
@@ -149,9 +156,12 @@ function isGoodRatio(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNum
     return sell === 'eth' ? targetRatio.lt(tradeRatio) : targetRatio.gt(tradeRatio)
 }
 
-function checkTxRatioGain(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNumber) {
-    return sell === 'strk' ? checkPromilleChange(targetRatio, tradeRatio, TRADE_GAIN_PROMILLE) : checkPromilleChange(tradeRatio, targetRatio, TRADE_GAIN_PROMILLE)
+function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber) {
+    return targetAmount.add(getMinGain(sell)).lt(tradeAmount)
+}
 
+function applyTxRatio(sell: EthOrStrk, amount: BigNumber, ratio: BigNumber) {
+    return sell === 'eth' ? applyRatio(ratio, undefined, amount) : applyRatio(ratio, amount, undefined)
 }
 
 function getFees(sell: EthOrStrk, quote: Quote, ratio?: BigNumber): BigNumber {

@@ -32,7 +32,8 @@ STARK_TOKEN - strk token address (in theory you could also use another supported
 WALLET - your public wallet address
 X - your private key
 SELL_PERCENT - percent of your total amount that should be traded within one trade 
-TRADE_GAIN_PROMILLE - promille gain you want minimum for a trade
+MIN_GAIN_ETH - How much ETH should be gained when selling STRK
+MIN_GAIN_STRK - How much STRK should be gained when selling ETH
 TRADE_FILE - relative path to the trading data file, make sure it exists and has the initial content:
 ```json
 [
