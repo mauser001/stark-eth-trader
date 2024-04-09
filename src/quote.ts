@@ -157,7 +157,11 @@ function isGoodRatio(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNum
 }
 
 function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber) {
-    return targetAmount.add(getMinGain(sell)).lt(tradeAmount)
+    const minGain = getMinGain(sell)
+    const totalTarget = targetAmount.add(minGain)
+    const isGood = totalTarget.lt(tradeAmount)
+    console.log(`checkTxGain isGood: ${isGood} sell:${sell} target: ${targetAmount.toString()} min gain: ${minGain} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
+    return isGood
 }
 
 function applyTxRatio(sell: EthOrStrk, amount: BigNumber, ratio: BigNumber) {
