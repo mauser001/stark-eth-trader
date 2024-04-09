@@ -127,11 +127,10 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData)
         }
         // If not we compare the ratios 
     } else {
-        const fixedSellAmount = applyTxRatio(sell, sellAmount, ratio)
-        if (fixedSellAmount && checkTxGain(sell, fixedSellAmount, fixedBuyAmount)) {
+        if (fixedBuyAmount && checkTradeGain(sell, fixedBuyAmount, ratio, tradeRatio)) {
             doTrade = true
         } else {
-            console.log(`no selling ${sell} as trade is not good enough fixes sell amount: ${fixedSellAmount?.toString()},  fixed trade amount: ${fixedBuyAmount.toString()}, div: ${fixedBuyAmount.sub(fixedSellAmount).toString()}`)
+            console.log(`no selling ${sell} as trade is not good enough with fixed trade amount: ${fixedBuyAmount.toString()}`)
         }
     }
     if (doTrade) {
@@ -164,8 +163,25 @@ function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigN
     return isGood
 }
 
-function applyTxRatio(sell: EthOrStrk, amount: BigNumber, ratio: BigNumber) {
-    return sell === 'eth' ? applyRatio(ratio, undefined, amount) : applyRatio(ratio, amount, undefined)
+function checkTradeGain(sell: EthOrStrk, tradeAmount: BigNumber, oldRatio: BigNumber, newRatio: BigNumber) {
+    const minGain = getMinGain(sell)
+    let withOldRatio: BigNumber
+    if (sell === 'eth') {
+        withOldRatio = tradeAmount.mul(oldRatio).div(newRatio)
+    } else {
+        withOldRatio = tradeAmount.mul(newRatio).div(oldRatio)
+    }
+    const totalTarget = withOldRatio.add(minGain)
+    const isGood = totalTarget.lt(tradeAmount)
+    console.log(`checkTxGain isGood: ${isGood} sell:${sell} with old ratio: ${withOldRatio} min gain: ${minGain} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
+    return isGood
+}
+
+function applyTxRatio(txSell: EthOrStrk, sell: EthOrStrk, amount: BigNumber, ratio: BigNumber) {
+    if (txSell !== sell) {
+        return amount
+    }
+    return txSell === 'strk' ? applyRatio(ratio, undefined, amount) : applyRatio(ratio, amount, undefined)
 }
 
 function getFees(sell: EthOrStrk, quote: Quote, ratio?: BigNumber): BigNumber {

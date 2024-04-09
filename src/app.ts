@@ -51,7 +51,7 @@ async function run() {
 
     if (quote?.quote) {
         console.log("We found a good trade matching: ", quote.matchedTx?.join(","), BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
-
+        return
         const response: InvokeSwapResponse = await executeSwap(account, quote.quote, { executeApprove: true }, avnuOptions)
         console.log("tx has of new trade: ", response.transactionHash)
         let matchedBy: string
