@@ -49,7 +49,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
         }
         if (matchedTx.length > 1) {
             console.log(`we found ${matchedTx.length} tx to combine`)
-            const quotes: Quote[] = await getAvnuQuotes(sell, newSellAmount, account.address, avnuOptions)
+            const quotes: Quote[] = await getAvnuQuotes(sell, newBuyAmount, account.address, avnuOptions)
             const txSell = sell === 'eth' ? 'strk' : 'eth'
             const testTx: TxData = {
                 sellAmount: newSellAmount.toString(),
