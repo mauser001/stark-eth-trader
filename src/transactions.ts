@@ -59,7 +59,11 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
     let needToSave = false
     // we the last state of the tx was not successfull we check the state via the api
     if (latest.status !== 'SUCCEEDED') {
-        const { execution_status } = await getStatus(latest.hash, provider)
+        const { execution_status, finality_status } = await getStatus(latest.hash, provider)
+        if (execution_status === 'SUCCEEDED' && finality_status === 'RECEIVED') {
+            console.log('execution SUCCEEDED but finality is still RECEIVED')
+            return { finished: false }
+        }
         if (latest.status !== execution_status) {
             latest.status = execution_status
             needToSave = true
@@ -67,6 +71,11 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
         // oh no our tx got reverted, so we remove it from our list
         if (latest.status === 'REVERTED') {
             transactions.splice(transactions.length - 1, 1)
+            transactions.forEach(tx => {
+                if (tx.matchedBy === latest.hash) {
+                    delete tx.matchedBy
+                }
+            })
             await saveTransactionData(transactions)
             return checkTransactions(provider, account)
         }
