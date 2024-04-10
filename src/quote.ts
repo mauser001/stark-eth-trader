@@ -6,13 +6,6 @@ import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
 export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched?: TxData[]) {
-    const params: QuoteRequest = {
-        size: 5,
-        sellTokenAddress: sell === 'eth' ? process.env.ETH_TOKEN : process.env.STARK_TOKEN,
-        buyTokenAddress: sell !== 'eth' ? process.env.ETH_TOKEN : process.env.STARK_TOKEN,
-        sellAmount: BigInt(sellAmount.toString()),
-        takerAddress: account.address
-    }
     // We get the quotes for the amount we want to sell and then check if we make enough profit
     const quotes: Quote[] = await getAvnuQuotes(sell, sellAmount, account.address, avnuOptions)
     let quote: QuoteData
