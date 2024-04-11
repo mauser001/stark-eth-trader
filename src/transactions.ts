@@ -8,6 +8,10 @@ export async function getStatus(hash: string, provider: RpcProvider) {
     return await provider.getTransactionStatus(hash)
 }
 
+export async function getBlock(provider: RpcProvider) {
+    return (await provider.getBlockLatestAccepted()).block_number
+}
+
 const dataPath = process.env.TRADE_FILE
 
 // save the transactions into a json file
@@ -78,6 +82,8 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
             })
             await saveTransactionData(transactions)
             return checkTransactions(provider, account)
+        } else if (needToSave) {
+            latest.block = await getBlock(provider)
         }
     }
 
