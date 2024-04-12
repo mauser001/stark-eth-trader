@@ -103,7 +103,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
             const prev = transactions[transactions.length - 2]
             const prevEth = BigNumber.from(prev.balanceEth)
             const prevStrk = BigNumber.from(prev.balanceStrk)
-            if (prevEth.eq(eth)) {
+            if (prevEth.eq(eth) || prevStrk.eq(strk)) {
                 console.log("no balance change so we wait")
                 return {
                     finished: false
