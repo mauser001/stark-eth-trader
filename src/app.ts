@@ -23,18 +23,18 @@ async function run() {
     const { account, provider } = await getAccount({ chainId, nodeUrl })
 
     // First let's get the latest transactions
-    const { finished, tx, unMatched } = await checkTransactions(provider, account)
+    const { finished, tx, unMatched, lastBlock } = await checkTransactions(provider, account)
     if (!finished || !tx) {
         return
     }
-    if (!latestBlock || latestBlock === tx.block) {
+    if (!latestBlock || latestBlock <= (lastBlock ?? 0)) {
         latestBlock = await getBlock(provider)
-        if (latestBlock === tx.block) {
-            console.log('we need to wait for the next block after', tx.block)
+        if (lastBlock && latestBlock <= lastBlock) {
+            console.log('we need to wait for the next block after', lastBlock)
             return
         }
     }
-
+    console.log('lets check tx', latestBlock, tx.block, tx.hash, tx.sell)
     // take the balances ether from the last tx or from the initial balance
     let eth: BigNumber, strk: BigNumber
     const isInitial = tx.matchedBy === 'initial'
@@ -58,10 +58,10 @@ async function run() {
     }
 
     if (quote?.quote) {
-        console.log("We found a good trade matching: ", quote.matchedTx?.join(","), BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
+        console.log("We found a good trade matching: ", quote.sell, quote.matchedTx?.join(","), BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
 
         const response: InvokeSwapResponse = await executeSwap(account, quote.quote, { executeApprove: true }, avnuOptions)
-        console.log("tx has of new trade: ", response.transactionHash)
+        console.log("tx hash of new trade: ", response.transactionHash)
         let matchedBy: string
         if (quote.wasMatch && quote.matchedTx.length) {
             matchedBy = quote.matchedTx[0]

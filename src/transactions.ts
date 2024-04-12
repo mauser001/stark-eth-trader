@@ -16,7 +16,7 @@ const dataPath = process.env.TRADE_FILE
 
 // save the transactions into a json file
 async function saveTransactionData(list: TxData[]): Promise<boolean> {
-    return new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
         fs.writeFile(dataPath, JSON.stringify(list, null, '\t'), err => {
             if (err) {
                 reject(err)
@@ -142,6 +142,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
     return {
         finished,
         tx,
+        lastBlock: latest?.block,
         unMatched: transactions.filter((t) => !t.matchedBy)
     }
 }
