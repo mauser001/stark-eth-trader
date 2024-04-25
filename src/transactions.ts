@@ -12,12 +12,12 @@ export async function getBlock(provider: RpcProvider) {
     return (await provider.getBlockLatestAccepted()).block_number
 }
 
-const dataPath = process.env.TRADE_FILE
+export const DATA_PATH = process.env.TRADE_FILE
 
 // save the transactions into a json file
-async function saveTransactionData(list: TxData[]): Promise<boolean> {
+export async function saveTransactionData(list: TxData[], path?: string): Promise<boolean> {
     return await new Promise((resolve, reject) => {
-        fs.writeFile(dataPath, JSON.stringify(list, null, '\t'), err => {
+        fs.writeFile(path || DATA_PATH, JSON.stringify(list, null, '\t'), err => {
             if (err) {
                 reject(err)
                 return
@@ -30,7 +30,7 @@ async function saveTransactionData(list: TxData[]): Promise<boolean> {
 // getting the transactions from the file
 export async function getTransactionData(): Promise<TxData[]> {
     return new Promise((resolve, reject) => {
-        fs.readFile(dataPath, 'utf8', (err, data) => {
+        fs.readFile(DATA_PATH, 'utf8', (err, data) => {
             if (err) {
                 reject(err)
                 return
