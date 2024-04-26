@@ -46,7 +46,7 @@ async function run() {
         strk = tx.sell === 'strk' ? BigNumber.from(tx.sellAmount) : BigNumber.from(tx.buyAmount)
     }
     // Calculate the strk - eth ratio ... this ratio will be used to compare to the quotes
-    const ratio = getRatio(strk, eth)
+    let ratio = getRatio(strk, eth)
 
     // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell e defined percentage
     const sellStrk = !tx.matchedBy && tx.sell === 'eth' ? BigNumber.from(tx.buyAmount) : BigNumber.from(latest.balanceStrk).mul(SELL_PERCENT).div(100)
@@ -54,6 +54,12 @@ async function run() {
     if (!quote?.quote) {
         // if we don't find a good quote for eth we try to get strk for a good price
         const sellEth = !tx.matchedBy && tx.sell === 'strk' ? BigNumber.from(tx.buyAmount) : BigNumber.from(latest.balanceEth).mul(SELL_PERCENT).div(100)
+        if (tx.sell === 'eth' && !tx.matchedBy) {
+            // get ratio from latest trade if the tx to match was an eth tx
+            eth = latest.sell === 'eth' ? BigNumber.from(latest.sellAmount) : BigNumber.from(latest.buyAmount)
+            strk = latest.sell === 'strk' ? BigNumber.from(latest.sellAmount) : BigNumber.from(latest.buyAmount)
+            ratio = getRatio(strk, eth)
+        }
         quote = await getQuote('eth', sellEth, account, avnuOptions, ratio, tx, unMatched)
     }
 
