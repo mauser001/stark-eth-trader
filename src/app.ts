@@ -49,11 +49,11 @@ async function run() {
     const ratio = getRatio(strk, eth)
 
     // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell e defined percentage
-    const sellStrk = !tx.matchedBy && tx.sell === 'eth' ? BigNumber.from(tx.buyAmount) : BigNumber.from(latest.balanceStrk).div(SELL_PERCENT)
+    const sellStrk = !tx.matchedBy && tx.sell === 'eth' ? BigNumber.from(tx.buyAmount) : BigNumber.from(latest.balanceStrk).mul(SELL_PERCENT).div(100)
     let quote = await getQuote('strk', sellStrk, account, avnuOptions, ratio, tx, unMatched)
     if (!quote?.quote) {
         // if we don't find a good quote for eth we try to get strk for a good price
-        const sellEth = !tx.matchedBy && tx.sell === 'strk' ? BigNumber.from(tx.buyAmount) : BigNumber.from(latest.balanceEth).div(SELL_PERCENT)
+        const sellEth = !tx.matchedBy && tx.sell === 'strk' ? BigNumber.from(tx.buyAmount) : BigNumber.from(latest.balanceEth).mul(SELL_PERCENT).div(100)
         quote = await getQuote('eth', sellEth, account, avnuOptions, ratio, tx, unMatched)
     }
 
