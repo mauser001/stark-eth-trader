@@ -142,7 +142,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
     return {
         finished,
         tx,
-        lastBlock: latest?.block,
+        latest,
         unMatched: transactions.filter((t) => !t.matchedBy)
     }
 }
