@@ -27,7 +27,7 @@ async function run() {
     if (!finished || !tx) {
         return
     }
-    if (!latestBlock || latestBlock <= (latest?.block ?? 0)) {
+    if (!latestBlock || latestBlock <= (latest?.block ?? 0) + 1) {
         latestBlock = await getBlock(provider)
         if (latest?.block && latestBlock <= latest.block) {
             console.log('we need to wait for the next block after', latest.block)
