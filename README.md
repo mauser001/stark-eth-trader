@@ -5,7 +5,7 @@ This tool is open source. Feel free to use / copy / modify it.
 ## Disclaimer
 **Use at your own risk!**
 This is not a financial tool, you can loose all your coins!
-It is just an experiment and should not be used to to try to gain money!
+It is just an experimental tool and should not be used to to try to gain money!
 
 ## Description
 This tool tries to trade Strk vs Eth on Starknet via the Avnu Dex aggregator . It tries to gain the amount of tokens.
@@ -15,7 +15,7 @@ Used tech / Prerequisites:
 - [Starknet Sdk](https://github.com/starknet-io/starknet.js)
 - [Avnu Sdk](https://github.com/avnu-labs/avnu-sdk)
 
-ää Installation
+## Installation
 - clone git repo
 - run ```script npm install```
 - copy the .env.example to .env and set the Private and Public key
@@ -25,16 +25,16 @@ Used tech / Prerequisites:
 ```
 - then run ```script npm run prod``` (if you first want to try it on Testnet you can run 'npm run dev', but at creation of this Sepolia was not yet supported by Avnu and Görli was about to die)
 
-ää .env file
-USE_TESTNET - true/false
-ETH_TOKEN - eth token address 
-STARK_TOKEN - strk token address (in theory you could also use another supported token address to trade against eth)
-WALLET - your public wallet address
-X - your private key
-SELL_PERCENT - percent of your total amount that should be traded within one trade 
-MIN_GAIN_ETH - How much ETH should be gained when selling STRK
-MIN_GAIN_STRK - How much STRK should be gained when selling ETH
-TRADE_FILE - relative path to the trading data file, make sure it exists and has the initial content:
+## .env file
+- USE_TESTNET - true/false
+- ETH_TOKEN - eth token address 
+- STARK_TOKEN - strk token address (in theory you could also use another supported token address to trade against eth)
+- WALLET - your public wallet address
+- X - your private key
+- SELL_PERCENT - percent of your total amount that should be traded within one trade 
+- MIN_GAIN_ETH - How much ETH should be gained when selling STRK
+- MIN_GAIN_STRK - How much STRK should be gained when selling ETH
+- TRADE_FILE - relative path to the trading data file, make sure it exists and has the initial content:
 ```json
 [
 	{
@@ -55,3 +55,9 @@ TRADE_FILE - relative path to the trading data file, make sure it exists and has
 ## Reporting
 
 Run ```script npm run report-prod ``` to get a short summary of your trades
+
+
+## Cleanup
+
+Run ```script npm extract-prod ``` to to extract already matched trades in ha separate file
+
