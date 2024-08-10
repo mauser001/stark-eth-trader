@@ -66,7 +66,7 @@ async function run() {
     if (quote?.quote) {
         console.log("We found a good trade matching: ", quote.sell, quote.matchedTx?.join(","), BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
 
-        const response: InvokeSwapResponse = await executeSwap(account, quote.quote, { executeApprove: true }, avnuOptions)
+        const response: InvokeSwapResponse = await executeSwap(account, quote.quote, { executeApprove: true, slippage: 0.01 }, avnuOptions)
         console.log("tx hash of new trade: ", response.transactionHash)
         let matchedBy: string
         if (quote.wasMatch && quote.matchedTx.length) {
@@ -82,7 +82,7 @@ async function loop() {
     } catch (e) {
         console.log('run failed', e)
     }
-    setTimeout(() => loop(), 30000)
+    setTimeout(() => loop(), 120000)
 }
 
 loop()
