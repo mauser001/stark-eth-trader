@@ -19,7 +19,7 @@ async function extractMatched() {
 
     console.log(`we have ${matched.length} matchted and ${unmatched.length} unmatched transactions`)
     const now = new Date()
-    const matchedPath = DATA_PATH.replace('.json', `_matched_${now.getFullYear()}_${now.getMonth()}_${now.getDate()}.json`)
+    const matchedPath = DATA_PATH.replace('.json', `_matched_${now.getFullYear()}_${now.getMonth() + 1}_${now.getDate()}.json`)
     await saveTransactionData(matched, matchedPath)
     await saveTransactionData([first, ...unmatched])
 }
