@@ -9,9 +9,14 @@ async function extractMatched() {
     const matched = []
     const unmatched = []
     const first = transactions.splice(0, 1)[0]
-    transactions.forEach((t) => {
+
+    transactions.forEach((t, index) => {
         if (t.matchedBy) {
             matched.push(t)
+            // if the last transaction is matched we still want to keep it for the last balance
+            if (index === transactions.length - 1) {
+                unmatched.push(t)
+            }
         } else {
             unmatched.push(t)
         }
