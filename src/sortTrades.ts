@@ -1,4 +1,3 @@
-import { formatEther, parseEther } from "ethers";
 import { DATA_PATH, getTransactionData, saveTransactionData } from "./transactions";
 import { BigNumber } from "@ethersproject/bignumber";
 import { TxData } from "./types";
@@ -21,7 +20,7 @@ async function sortTrades() {
     transactions = transactions.sort(sortT)
 
     const now = new Date()
-    await saveTransactionData([first, ...transactions], DATA_PATH.replace('.json', '_test.json'))
+    await saveTransactionData([first, ...transactions], DATA_PATH?.replace('.json', '_test.json'))
 }
 
 sortTrades()

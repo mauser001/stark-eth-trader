@@ -12,8 +12,8 @@ import { getRatio } from './math';
 import { SELL_PERCENT } from './conts';
 
 const useTestnet = process.env.USE_TESTNET === 'true'
-const chainId = useTestnet ? constants.StarknetChainId.SN_GOERLI : constants.StarknetChainId.SN_MAIN
-const nodeUrl = useTestnet ? constants.RPC_GOERLI_NODES[0] : constants.RPC_MAINNET_NODES[0]
+const chainId = useTestnet ? constants.StarknetChainId.SN_SEPOLIA : constants.StarknetChainId.SN_MAIN
+const nodeUrl = useTestnet ? constants.RPC_NODES.SN_SEPOLIA[0] : constants.RPC_NODES.SN_MAIN[0]
 const avnuOptions: AvnuOptions = { baseUrl: useTestnet ? 'https://goerli.api.avnu.fi' : 'https://starknet.api.avnu.fi' }
 let latestBlock = 0
 
@@ -68,8 +68,8 @@ async function run() {
 
         const response: InvokeSwapResponse = await executeSwap(account, quote.quote, { executeApprove: true, slippage: 0.01 }, avnuOptions)
         console.log("tx hash of new trade: ", response.transactionHash)
-        let matchedBy: string
-        if (quote.wasMatch && quote.matchedTx.length) {
+        let matchedBy: string | undefined = undefined
+        if (quote.wasMatch && quote.matchedTx?.length) {
             matchedBy = quote.matchedTx[0]
         }
         await addTransaction({ hash: response.transactionHash, sell: quote.sell, matchedBy, timestamp: Date.now() }, quote.matchedTx)

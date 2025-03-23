@@ -2,7 +2,7 @@ import { formatEther } from "ethers";
 import { getTransactionData } from "./transactions";
 import { BigNumber } from "@ethersproject/bignumber";
 
-function printBalance(label: string, eth: string, strk: string) {
+function printBalance(label: string, eth: string = '', strk: string = '') {
     console.log(`${label} in wei: Eth: ${eth} |  Strk: ${strk}`)
     console.log(`${label} formated: Eth: ${formatEther(eth)} | Strk: ${formatEther(strk)}`)
 }

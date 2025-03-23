@@ -1,4 +1,4 @@
-import { Account, RpcProvider, transaction } from "starknet";
+import { Account, RpcProvider } from "starknet";
 import fs from 'node:fs';
 import { getBalances } from "./balances";
 import { BigNumber } from "@ethersproject/bignumber";
@@ -17,7 +17,7 @@ export const DATA_PATH = process.env.TRADE_FILE
 // save the transactions into a json file
 export async function saveTransactionData(list: TxData[], path?: string): Promise<boolean> {
     return await new Promise((resolve, reject) => {
-        fs.writeFile(path || DATA_PATH, JSON.stringify(list, null, '\t'), err => {
+        fs.writeFile(path || DATA_PATH || '', JSON.stringify(list, null, '\t'), err => {
             if (err) {
                 reject(err)
                 return
@@ -30,7 +30,7 @@ export async function saveTransactionData(list: TxData[], path?: string): Promis
 // getting the transactions from the file
 export async function getTransactionData(): Promise<TxData[]> {
     return new Promise((resolve, reject) => {
-        fs.readFile(DATA_PATH, 'utf8', (err, data) => {
+        fs.readFile(DATA_PATH || '', 'utf8', (err, data) => {
             if (err) {
                 reject(err)
                 return
@@ -126,7 +126,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
     if (needToSave) {
         await saveTransactionData(transactions)
     }
-    let tx: TxData
+    let tx: TxData | undefined = undefined
     if (finished && latest.balanceEth) {
         // all transactions are confirmed, so we get the most recent tx that was not filled
         for (let i = transactions.length - 1; i >= 0; i--) {
