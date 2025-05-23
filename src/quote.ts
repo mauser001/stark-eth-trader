@@ -1,7 +1,7 @@
 import { AvnuOptions, Quote, QuoteRequest, fetchQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { MIN_GAIN_ETH, MIN_GAIN_STRK, RATIO_MULTI } from "./conts"
+import { MIN_GAIN_ETH, MIN_GAIN_STRK, RATIO_MULTI, SELL_PERCENT } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
@@ -149,10 +149,10 @@ function isGoodRatio(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNum
 }
 
 function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber) {
-    const minGain = getMinGain(sell)
-    const totalTarget = targetAmount.add(minGain)
+    const oneHundred = BigNumber.from('100')
+    const totalTarget = targetAmount.mul(oneHundred.add(SELL_PERCENT)).div(oneHundred)
     const isGood = totalTarget.lt(tradeAmount)
-    console.log(`checkTxGain isGood: ${isGood} sell:${sell} target: ${targetAmount.toString()} min gain: ${minGain} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
+    console.log(`checkTxGain isGood: ${isGood} sell:${sell} target: ${targetAmount.toString()} sell percent: ${SELL_PERCENT} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
     return isGood
 }
 
