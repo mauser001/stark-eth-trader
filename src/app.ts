@@ -3,7 +3,7 @@ import {
     InvokeSwapResponse,
     executeSwap,
 } from '@avnu/avnu-sdk';
-import { constants } from 'starknet'
+import { constants, provider } from 'starknet'
 import { getQuote } from './quote';
 import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
@@ -13,10 +13,9 @@ import { SELL_PERCENT } from './conts';
 
 const useTestnet = process.env.USE_TESTNET === 'true'
 const chainId = useTestnet ? constants.StarknetChainId.SN_SEPOLIA : constants.StarknetChainId.SN_MAIN
-const nodeUrl = useTestnet ? constants.RPC_NODES.SN_SEPOLIA[0] : constants.RPC_NODES.SN_MAIN[0]
+const nodeUrl = provider.getDefaultNodeUrl(useTestnet ? constants.NetworkName.SN_SEPOLIA : constants.NetworkName.SN_MAIN)
 const avnuOptions: AvnuOptions = { baseUrl: useTestnet ? 'https://goerli.api.avnu.fi' : 'https://starknet.api.avnu.fi' }
 let latestBlock = 0
-
 async function run() {
     console.log(`${new Date().toLocaleString()} run useTestnet: ${useTestnet}, chainId: ${chainId},node url: ${nodeUrl}`)
     // Get account
