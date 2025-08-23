@@ -1,7 +1,7 @@
 import { AvnuOptions, Quote, QuoteRequest, fetchQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { MIN_GAIN_ETH, MIN_GAIN_STRK, RATIO_MULTI, SELL_PERCENT } from "./conts"
+import { RATIO_MULTI, TRADE_DIFFERENCE_1000 } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
@@ -120,7 +120,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData)
         }
         // If not we compare the ratios 
     } else {
-        if (fixedBuyAmount && checkTradeGain(sell, fixedBuyAmount, ratio, tradeRatio)) {
+        if (fixedBuyAmount && checkNextTradeDifference(sell, fixedBuyAmount, ratio, tradeRatio)) {
             doTrade = true
         } else {
             console.log(`no selling ${sell} as trade is not good enough with fixed trade amount: ${fixedBuyAmount.toString()}`)
@@ -131,13 +131,10 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData)
             quote,
             ratio: tradeRatio,
             wasMatch,
-            sell
+            sell,
+            fees
         }
     }
-}
-
-function getMinGain(sell: EthOrStrk) {
-    return sell === 'eth' ? MIN_GAIN_STRK : MIN_GAIN_ETH
 }
 
 function getTxRatio(sell: EthOrStrk, sellAmount: BigNumber, buyAmount: BigNumber) {
@@ -148,39 +145,35 @@ function isGoodRatio(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNum
     return sell === 'eth' ? targetRatio.lt(tradeRatio) : targetRatio.gt(tradeRatio)
 }
 
+function addPercentPoint(amount: BigNumber, percent: BigNumber): BigNumber {
+    const oneThousand = BigNumber.from('1000')
+    return amount.mul(oneThousand.add(percent)).div(oneThousand)
+}
+
 function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber) {
-    const oneHundred = BigNumber.from('100')
-    const totalTarget = targetAmount.mul(oneHundred.add(SELL_PERCENT)).div(oneHundred)
+    const totalTarget = addPercentPoint(targetAmount, TRADE_DIFFERENCE_1000)
     const isGood = totalTarget.lt(tradeAmount)
-    console.log(`checkTxGain isGood: ${isGood} sell:${sell} target: ${targetAmount.toString()} sell percent: ${SELL_PERCENT} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
+    console.log(`checkTxGain isGood: ${isGood} sell:${sell} target: ${targetAmount.toString()} sell percent: ${TRADE_DIFFERENCE_1000} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
     return isGood
 }
 
-function checkTradeGain(sell: EthOrStrk, tradeAmount: BigNumber, oldRatio: BigNumber, newRatio: BigNumber) {
-    const minGain = getMinGain(sell)
+function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRatio: BigNumber, newRatio: BigNumber) {
     let withOldRatio: BigNumber
     if (sell === 'eth') {
         withOldRatio = tradeAmount.mul(oldRatio).div(newRatio)
     } else {
         withOldRatio = tradeAmount.mul(newRatio).div(oldRatio)
     }
-    const totalTarget = withOldRatio.add(minGain)
+    const totalTarget = addPercentPoint(withOldRatio, TRADE_DIFFERENCE_1000)
     const isGood = totalTarget.lt(tradeAmount)
-    console.log(`checkTxGain isGood: ${isGood} sell:${sell} with old ratio: ${withOldRatio} min gain: ${minGain} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
+    console.log(`checkNextTradeDifference isGood: ${isGood} sell:${sell} with old ratio: ${withOldRatio} min percent gain: ${TRADE_DIFFERENCE_1000} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
     return isGood
-}
-
-function applyTxRatio(txSell: EthOrStrk, sell: EthOrStrk, amount: BigNumber, ratio: BigNumber) {
-    if (txSell !== sell) {
-        return amount
-    }
-    return txSell === 'strk' ? applyRatio(ratio, undefined, amount) : applyRatio(ratio, amount, undefined)
 }
 
 function getFees(sell: EthOrStrk, quote: Quote, ratio?: BigNumber): BigNumber {
     const baseFee = sell === 'eth' ? BigNumber.from(quote.gasFees).mul(ratio).div(RATIO_MULTI) : BigNumber.from(quote.gasFees)
     console.log(`baseFee: ${baseFee}, quote.avnuFees:${quote.avnuFees}, quote.integratorFees: ${quote.integratorFees}`)
-    return baseFee.add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
+    return baseFee //.add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
 }
 
 async function getAvnuQuotes(sell: EthOrStrk, sellAmount: BigNumber, takerAddress: string, avnuOptions: AvnuOptions) {

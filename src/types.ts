@@ -12,6 +12,10 @@ export type TxData = {
     buyAmount?: string,
     balanceEth?: string,
     balanceStrk?: string,
+    expectedFees?: string,
+    expectedBuyAmount?: string,
+    expectedByAmountWithoutFees?: string,
+    expectedGasFees?: string,
     timestamp?: number,
     block?: number,
 }
@@ -22,4 +26,5 @@ export type QuoteData = {
     wasMatch?: boolean,
     matchedTx?: string[],
     sell?: EthOrStrk,
+    fees?: BigNumber
 }

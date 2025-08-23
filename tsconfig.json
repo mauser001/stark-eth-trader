@@ -5,7 +5,7 @@
       "target":"ES2022",
       "moduleResolution": "node",
       "sourceMap": false,
-      "outDir": "dist",
+      "outDir": "./dist",
       "lib": [
         "es2022"
       ],
@@ -16,6 +16,6 @@
     },
     "exclude": [
       "node_modules",
-      "dist"
+      "./dist"
     ]
   }

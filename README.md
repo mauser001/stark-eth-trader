@@ -32,8 +32,7 @@ Used tech / Prerequisites:
 - WALLET - your public wallet address
 - X - your private key
 - SELL_PERCENT - percent of your total amount that should be traded within one trade 
-- MIN_GAIN_ETH - How much ETH should be gained when selling STRK
-- MIN_GAIN_STRK - How much STRK should be gained when selling ETH
+- TRADE_DIFFERENCE_1000 - difference needed for a good trade in 10th of a percent
 - TRADE_FILE - relative path to the trading data file, make sure it exists and has the initial content:
 ```json
 [

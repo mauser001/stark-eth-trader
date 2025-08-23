@@ -72,7 +72,19 @@ async function run() {
         if (quote.wasMatch && quote.matchedTx?.length) {
             matchedBy = quote.matchedTx[0]
         }
-        await addTransaction({ hash: response.transactionHash, sell: quote.sell, matchedBy, timestamp: Date.now() }, quote.matchedTx)
+        await addTransaction(
+            {
+                hash: response.transactionHash,
+                sell: quote.sell,
+                matchedBy,
+                timestamp: Date.now(),
+                expectedFees: quote.fees?.toString(),
+                expectedBuyAmount: quote.quote.buyAmount.toString(),
+                expectedByAmountWithoutFees: quote.quote.buyAmountWithoutFees.toString(),
+                expectedGasFees: quote.quote.gasFees.toString()
+            },
+            quote.matchedTx
+        )
     }
 }
 
@@ -82,7 +94,7 @@ async function loop() {
     } catch (e) {
         console.log('run failed', e)
     }
-    setTimeout(() => loop(), 120000)
+    setTimeout(() => loop(), 10000)
 }
 
 loop()
