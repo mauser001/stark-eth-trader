@@ -9,11 +9,12 @@ import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
 import { addTransaction, checkTransactions, getBlock } from './transactions';
 import { getRatio } from './math';
-import { SELL_PERCENT } from './conts';
+import { MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT } from './conts';
+import { QuoteData } from './types';
 
 const useTestnet = process.env.USE_TESTNET === 'true'
 const chainId = useTestnet ? constants.StarknetChainId.SN_SEPOLIA : constants.StarknetChainId.SN_MAIN
-const nodeUrl = provider.getDefaultNodeUrl(useTestnet ? constants.NetworkName.SN_SEPOLIA : constants.NetworkName.SN_MAIN)
+const nodeUrl = process.env.NODE_RPC || provider.getDefaultNodeUrl(useTestnet ? constants.NetworkName.SN_SEPOLIA : constants.NetworkName.SN_MAIN)
 const avnuOptions: AvnuOptions = { baseUrl: useTestnet ? 'https://goerli.api.avnu.fi' : 'https://starknet.api.avnu.fi' }
 let latestBlock = 0
 async function run() {
@@ -48,18 +49,25 @@ async function run() {
     let ratio = getRatio(strk, eth)
 
     // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell e defined percentage
-    const sellStrk = !tx.matchedBy && tx.sell === 'eth' ? BigNumber.from(tx.buyAmount) : BigNumber.from(latest.balanceStrk).mul(SELL_PERCENT).div(100)
-    let quote = await getQuote('strk', sellStrk, account, avnuOptions, ratio, tx, unMatched)
+    const sellStrk = !tx.matchedBy && tx.sell === 'eth' ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), SELL_PERCENT, MIN_SEL_AMOUNT_STRK)
+    let quote: QuoteData;
+    if (sellStrk)
+        quote = await getQuote('strk', sellStrk, account, avnuOptions, ratio, tx, unMatched)
+    else
+        console.log('Not enough strk balance: ', latest.balanceStrk)
     if (!quote?.quote) {
         // if we don't find a good quote for eth we try to get strk for a good price
-        const sellEth = !tx.matchedBy && tx.sell === 'strk' ? BigNumber.from(tx.buyAmount) : BigNumber.from(latest.balanceEth).mul(SELL_PERCENT).div(100)
+        const sellEth = !tx.matchedBy && tx.sell === 'strk' ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), SELL_PERCENT, MIN_SEL_AMOUNT_ETH)
         if (tx.sell === 'eth' && !tx.matchedBy) {
             // get ratio from latest trade if the tx to match was an eth tx
             eth = latest.sell === 'eth' ? BigNumber.from(latest.sellAmount) : BigNumber.from(latest.buyAmount)
             strk = latest.sell === 'strk' ? BigNumber.from(latest.sellAmount) : BigNumber.from(latest.buyAmount)
             ratio = getRatio(strk, eth)
         }
-        quote = await getQuote('eth', sellEth, account, avnuOptions, ratio, tx, unMatched)
+        if (sellEth)
+            quote = await getQuote('eth', sellEth, account, avnuOptions, ratio, tx, unMatched)
+        else
+            console.log('Not enough ethe balance: ', latest.balanceStrk)
     }
 
     if (quote?.quote) {
@@ -85,6 +93,14 @@ async function run() {
             quote.matchedTx
         )
     }
+}
+
+function getSellAmount(balance: BigNumber, percentage: BigNumber, minAmount: BigNumber): BigNumber | undefined {
+    if (balance.lt(minAmount))
+        return
+
+    const part = BigNumber.from(balance).mul(percentage).div(100)
+    return part.gt(minAmount) ? part : minAmount
 }
 
 async function loop() {
