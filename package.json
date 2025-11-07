@@ -7,8 +7,9 @@
     "build": "npx tsc",
     "dev": "npm run build && node --env-file=.env dist/app.js",
     "prod": "npm run build && node --env-file=prod.env dist/app.js",
-    "report-prod": "node --env-file=prod.env dist/reporting.js",
-    "extract-prod": "node --env-file=prod.env dist/extractMatched.js",
+    "report-prod": "npm run build && node --env-file=prod.env dist/reporting.js",
+    "extract-prod": "npm run build && node --env-file=prod.env dist/extractMatched.js",
+    "combine-prod": "npm run build && node --env-file=prod.env dist/combine.js",
     "sort-prod": "node --env-file=prod.env dist/sortTrades.js"
   },
   "keywords": [],

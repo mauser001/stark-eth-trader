@@ -50,6 +50,10 @@ async function analyseTades() {
     }
     transactions.slice(1).forEach(t => {
         if (t.sell === 'eth') {
+            const ratio = BigNumber.from(t.buyAmount).div(BigNumber.from(t.sellAmount))
+            console.log('Ratio: ', ratio.toString(), new Date(t.timestamp).toDateString())
+        }
+        if (t.sell === 'eth') {
             count.ethSell++
             if (t.matchedBy) {
                 count.ethMatched++
