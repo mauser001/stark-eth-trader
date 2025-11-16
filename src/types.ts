@@ -5,7 +5,7 @@ export type EthOrStrk = 'eth' | 'strk'
 
 export type TxData = {
     hash: string;
-    status?: 'SUCCEEDED' | 'REVERTED',
+    status?: 'SUCCEEDED' | 'REVERTED' | 'NOT_FOUND',
     sell?: EthOrStrk,
     matchedBy?: string,
     sellAmount?: string,
