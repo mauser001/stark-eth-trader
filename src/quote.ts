@@ -5,13 +5,13 @@ import { RATIO_MULTI, TRADE_DIFFERENCE_1000 } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
-export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched?: TxData[]) {
+export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched?: TxData[], failedFees: BigNumber = BigNumber.from('0')): Promise<QuoteData> {
     // We get the quotes for the amount we want to sell and then check if we make enough profit
     const quotes: Quote[] = await getAvnuQuotes(sell, sellAmount, account.address, avnuOptions)
     let quote: QuoteData
     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
     quotes.forEach((q) => {
-        const data = checkQuote(sell, q, quote?.ratio || ratio, tx)
+        const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees)
         if (data) {
             quote = data
             if (quote.wasMatch) {
@@ -53,7 +53,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
             let testRatio = getTxRatio(txSell, newSellAmount, newBuyAmount)
             // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
             quotes.forEach((q) => {
-                const data = checkQuote(sell, q, testRatio, testTx)
+                const data = checkQuote(sell, q, testRatio, testTx, failedFees)
                 if (data?.quote) {
                     quote = { ...data, matchedTx }
                     testRatio = quote.ratio
@@ -67,7 +67,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
 }
 
 // check the quote for selling 
-function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData): QuoteData | undefined {
+function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData, failedFees: BigNumber): QuoteData | undefined {
     const buyAmount = BigNumber.from(quote.buyAmount)
     const sellAmount = BigNumber.from(quote.sellAmount)
     // calculate the ratio of the quote
@@ -109,7 +109,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData)
     }
     // if there is an open tx where we sold eth then we compare the quote with it
     if (!tx.matchedBy && tx.sell !== sell) {
-        if (checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount)) {
+        if (checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount, failedFees, tradeRatio)) {
             doTrade = true
             wasMatch = true
         } else {
@@ -150,10 +150,12 @@ function addPercentPoint(amount: BigNumber, percent: BigNumber): BigNumber {
     return amount.mul(oneThousand.add(percent)).div(oneThousand)
 }
 
-function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber) {
-    const totalTarget = addPercentPoint(targetAmount, TRADE_DIFFERENCE_1000)
+function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber, failedFees: BigNumber, ratio: BigNumber) {
+    const ajustedFailedFees = sell === 'eth' || failedFees.eq(BigNumber.from('0')) ? failedFees : applyRatio(ratio, failedFees, undefined)
+    const totalTarget = addPercentPoint(targetAmount, TRADE_DIFFERENCE_1000).add(ajustedFailedFees)
     const isGood = totalTarget.lt(tradeAmount)
-    console.log(`checkTxGain isGood: ${isGood} sell:${sell} target: ${targetAmount.toString()} sell percent: ${TRADE_DIFFERENCE_1000} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
+    const dif = tradeAmount.mul(1000).div(totalTarget);
+    console.log(`checkTxGain isGood: ${isGood} sell:${sell}, target: ${targetAmount.toString()}, sell percent: ${TRADE_DIFFERENCE_1000}, total target: ${totalTarget.toString()}, with failed fees: ${failedFees.toString()}, ajustedFailedFees: ${ajustedFailedFees.toString()}, trade: ${tradeAmount.toString()}, div: ${dif.toString()}%`)
     return isGood
 }
 
@@ -166,7 +168,8 @@ function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRa
     }
     const totalTarget = addPercentPoint(withOldRatio, TRADE_DIFFERENCE_1000)
     const isGood = totalTarget.lt(tradeAmount)
-    console.log(`checkNextTradeDifference isGood: ${isGood} sell:${sell} with old ratio: ${withOldRatio} min percent gain: ${TRADE_DIFFERENCE_1000} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}`)
+    const dif = tradeAmount.mul(1000).div(totalTarget);
+    console.log(`checkNextTradeDifference isGood: ${isGood} sell:${sell} with old ratio: ${withOldRatio} min percent gain: ${TRADE_DIFFERENCE_1000} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}, div: ${dif.toString()}%`)
     return isGood
 }
 

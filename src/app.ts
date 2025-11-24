@@ -7,7 +7,7 @@ import { constants, provider } from 'starknet'
 import { getQuote } from './quote';
 import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
-import { addTransaction, checkTransactions, getBlock } from './transactions';
+import { addTransaction, checkTransactions, getBlock, getFailedTransactions } from './transactions';
 import { getRatio } from './math';
 import { MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT } from './conts';
 import { QuoteData } from './types';
@@ -18,7 +18,7 @@ const nodeUrl = process.env.NODE_RPC || provider.getDefaultNodeUrl(useTestnet ? 
 const avnuOptions: AvnuOptions = { baseUrl: useTestnet ? 'https://goerli.api.avnu.fi' : 'https://starknet.api.avnu.fi' }
 let latestBlock = 0
 async function run() {
-    console.log(`${new Date().toLocaleString()} run useTestnet: ${useTestnet}, chainId: ${chainId},node url: ${nodeUrl}`)
+    console.log(`${new Date().toLocaleString()} run useTestnet: ${useTestnet}, chainId: ${chainId}`)
     // Get account
     const { account, provider } = await getAccount({ chainId, nodeUrl })
 
@@ -34,6 +34,9 @@ async function run() {
             return
         }
     }
+    const { currentFailedAmmount } = await getFailedTransactions()
+    const failedFees = BigNumber.from(currentFailedAmmount)
+
     console.log('lets check tx', latestBlock, tx.block, tx.hash, tx.sell)
     // take the balances ether from the last tx or from the initial balance
     let eth: BigNumber, strk: BigNumber
@@ -52,7 +55,7 @@ async function run() {
     const sellStrk = !tx.matchedBy && tx.sell === 'eth' ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), SELL_PERCENT, MIN_SEL_AMOUNT_STRK)
     let quote: QuoteData;
     if (sellStrk)
-        quote = await getQuote('strk', sellStrk, account, avnuOptions, ratio, tx, unMatched)
+        quote = await getQuote('strk', sellStrk, account, avnuOptions, ratio, tx, unMatched, failedFees)
     else
         console.log('Not enough strk balance: ', latest.balanceStrk)
     if (!quote?.quote) {
@@ -65,7 +68,7 @@ async function run() {
             ratio = getRatio(strk, eth)
         }
         if (sellEth)
-            quote = await getQuote('eth', sellEth, account, avnuOptions, ratio, tx, unMatched)
+            quote = await getQuote('eth', sellEth, account, avnuOptions, ratio, tx, unMatched, failedFees)
         else
             console.log('Not enough ethe balance: ', latest.balanceStrk)
     }
@@ -107,7 +110,11 @@ async function loop() {
     try {
         await run()
     } catch (e) {
-        console.log('run failed', e)
+        try {
+            console.warn('run failed: ', JSON.stringify(e))
+        } catch {
+            console.warn('run failed: ', e)
+        }
     }
     setTimeout(() => loop(), 10000)
 }

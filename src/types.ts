@@ -28,3 +28,9 @@ export type QuoteData = {
     sell?: EthOrStrk,
     fees?: BigNumber
 }
+
+export type FailedTransactions = {
+    currentFailedAmmount: string,
+    failedCount: number,
+    failedHashes: string[]
+}

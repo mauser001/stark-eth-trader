@@ -1,8 +1,8 @@
-import { Account, RpcProvider } from "starknet";
+import { Account, RpcProvider, SuccessfulTransactionReceiptResponse } from "starknet";
 import fs from 'node:fs';
 import { getBalances } from "./balances";
 import { BigNumber } from "@ethersproject/bignumber";
-import { TxData } from "./types";
+import { FailedTransactions, TxData } from "./types";
 
 const NOT_FOUND = 'NOT_FOUND' as const;
 
@@ -11,8 +11,8 @@ export async function getStatus(hash: string, provider: RpcProvider, timestamp: 
         return await provider.getTransactionStatus(hash);
     }
     catch (e) {
-        console.log(`error getting status for tx ${hash} at ${timestamp}: ${e}`);
-        if (e.baseError && e.baseError.code === 29 && new Date().getTime() - timestamp > 1000 * 60 * 10) {
+        console.log(`error getting status for tx ${hash} at ${timestamp}: ${JSON.stringify(e)}`);
+        if (e.baseError && e.baseError.code === 29 && new Date().getTime() - timestamp > 1000 * 60 * 20) {
             return {
                 execution_status: NOT_FOUND,
                 finality_status: NOT_FOUND
@@ -22,16 +22,60 @@ export async function getStatus(hash: string, provider: RpcProvider, timestamp: 
     }
 }
 
+async function getFees(hash: string, provider: RpcProvider): Promise<BigNumber> {
+    if (hash === 'initial')
+        return BigNumber.from('0')
+
+    try {
+        const tx = await provider.getTransactionReceipt(hash)
+        const value = (tx.value as SuccessfulTransactionReceiptResponse)
+        return BigNumber.from(value.actual_fee.amount)
+    }
+    catch (e) {
+        return BigNumber.from('0')
+    }
+}
+
+export async function getFailedTransactions(): Promise<FailedTransactions> {
+    const failedData = await readFile<FailedTransactions | undefined>(process.env.FAILED_TRADE_FILE || 'failedTrades.json', true);
+    return failedData || {
+        currentFailedAmmount: '0',
+        failedCount: 0,
+        failedHashes: []
+    }
+}
+
+async function trackFailedTransaction(hash: string, provider: RpcProvider) {
+    const [fees, failedTransactions] = await Promise.all([getFees(hash, provider), getFailedTransactions()]);
+    return saveFailedTransactions({
+        currentFailedAmmount: BigNumber.from(failedTransactions.currentFailedAmmount).add(fees).toString(),
+        failedCount: failedTransactions.failedCount + 1,
+        failedHashes: [...failedTransactions.failedHashes, hash]
+    })
+}
+
+export async function clearFailedTransaction(): Promise<boolean> {
+    const failedTransactions = await getFailedTransactions();
+    return await saveFailedTransactions({
+        ...failedTransactions,
+        currentFailedAmmount: '0'
+    })
+}
+
+async function saveFailedTransactions(failedTransactions: FailedTransactions): Promise<boolean> {
+    return await saveFile(failedTransactions, process.env.FAILED_TRADE_FILE || 'failedTrades.json')
+}
+
 export async function getBlock(provider: RpcProvider) {
     return (await provider.getBlockLatestAccepted()).block_number
 }
 
 export const DATA_PATH = process.env.TRADE_FILE
 
-// save the transactions into a json file
-export async function saveTransactionData(list: TxData[], path?: string): Promise<boolean> {
+
+async function saveFile<T>(list: T, path: string): Promise<boolean> {
     return await new Promise((resolve, reject) => {
-        fs.writeFile(path || DATA_PATH || '', JSON.stringify(list, null, '\t'), err => {
+        fs.writeFile(path, JSON.stringify(list, null, '\t'), err => {
             if (err) {
                 reject(err)
                 return
@@ -41,15 +85,20 @@ export async function saveTransactionData(list: TxData[], path?: string): Promis
     })
 }
 
-// getting the transactions from the file
-export async function getTransactionData(): Promise<TxData[]> {
+export async function saveTransactionData(list: TxData[], path?: string): Promise<boolean> {
+    return await saveFile(list, path || DATA_PATH || '')
+}
+
+async function readFile<T>(path: string, canBeUndefined = false): Promise<T> {
     return new Promise((resolve, reject) => {
-        fs.readFile(DATA_PATH || '', 'utf8', (err, data) => {
+        fs.readFile(path || DATA_PATH || '', 'utf8', (err, data) => {
             if (err) {
                 reject(err)
                 return
             }
             if (!data) {
+                if (canBeUndefined)
+                    resolve(undefined as unknown as T)
                 reject('no data')
                 return
             }
@@ -58,7 +107,10 @@ export async function getTransactionData(): Promise<TxData[]> {
     })
 }
 
-// adding a transaction to the transactions file
+export async function getTransactionData(): Promise<TxData[]> {
+    return await readFile<TxData[]>(DATA_PATH || '')
+}
+
 export async function addTransaction(tx: TxData, matchedTx?: string[]) {
     const transactions = await getTransactionData()
     transactions.forEach((t) => {
@@ -85,6 +137,9 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
         if (latest.status !== execution_status) {
             latest.status = execution_status
             needToSave = true
+        }
+        if (latest.status === 'REVERTED') {
+            await trackFailedTransaction(latest.hash, provider)
         }
         // oh no our tx got reverted, so we remove it from our list
         if (latest.status === 'REVERTED' || latest.status === NOT_FOUND) {
@@ -136,6 +191,12 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
         latest.balanceEth = eth.toString()
         latest.balanceStrk = strk.toString()
         needToSave = true
+        try {
+            if (latest.matchedBy)
+                await clearFailedTransaction()
+        } catch (e) {
+            console.log('clearFailedTransaction error', e)
+        }
     }
     if (needToSave) {
         await saveTransactionData(transactions)
