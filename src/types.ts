@@ -18,6 +18,7 @@ export type TxData = {
     expectedGasFees?: string,
     timestamp?: number,
     block?: number,
+    failedFeesIncluded?: string
 }
 
 export type QuoteData = {

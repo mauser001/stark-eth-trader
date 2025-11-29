@@ -87,6 +87,7 @@ async function run() {
                 hash: response.transactionHash,
                 sell: quote.sell,
                 matchedBy,
+                ...{ failedFeesIncluded: matchedBy && failedFees.gt(0) ? failedFees.toString() : undefined },
                 timestamp: Date.now(),
                 expectedFees: quote.fees?.toString(),
                 expectedBuyAmount: quote.quote.buyAmount.toString(),
