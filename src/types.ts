@@ -14,7 +14,6 @@ export type TxData = {
     balanceStrk?: string,
     expectedFees?: string,
     expectedBuyAmount?: string,
-    expectedByAmountWithoutFees?: string,
     expectedGasFees?: string,
     timestamp?: number,
     block?: number,

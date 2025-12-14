@@ -1,6 +1,5 @@
 import {
     AvnuOptions,
-    InvokeSwapResponse,
     executeSwap,
 } from '@avnu/avnu-sdk';
 import { constants, provider } from 'starknet'
@@ -76,7 +75,7 @@ async function run() {
     if (quote?.quote) {
         console.log("We found a good trade matching: ", quote.sell, quote.matchedTx?.join(","), BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
 
-        const response: InvokeSwapResponse = await executeSwap(account, quote.quote, { executeApprove: true, slippage: 0.01 }, avnuOptions)
+        const response = await executeSwap({ provider: account, quote: quote.quote, executeApprove: true, slippage: 0.01 }, avnuOptions)
         console.log("tx hash of new trade: ", response.transactionHash)
         let matchedBy: string | undefined = undefined
         if (quote.wasMatch && quote.matchedTx?.length) {
@@ -91,7 +90,6 @@ async function run() {
                 timestamp: Date.now(),
                 expectedFees: quote.fees?.toString(),
                 expectedBuyAmount: quote.quote.buyAmount.toString(),
-                expectedByAmountWithoutFees: quote.quote.buyAmountWithoutFees.toString(),
                 expectedGasFees: quote.quote.gasFees.toString()
             },
             quote.matchedTx

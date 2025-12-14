@@ -1,4 +1,4 @@
-import { AvnuOptions, Quote, QuoteRequest, fetchQuotes } from "@avnu/avnu-sdk"
+import { AvnuOptions, Quote, QuoteRequest, getQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
 import { RATIO_MULTI, TRADE_DIFFERENCE_1000 } from "./conts"
@@ -175,7 +175,7 @@ function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRa
 
 function getFees(sell: EthOrStrk, quote: Quote, ratio?: BigNumber): BigNumber {
     const baseFee = sell === 'eth' ? BigNumber.from(quote.gasFees).mul(ratio).div(RATIO_MULTI) : BigNumber.from(quote.gasFees)
-    console.log(`baseFee: ${baseFee}, quote.avnuFees:${quote.avnuFees}, quote.integratorFees: ${quote.integratorFees}`)
+    console.log(`baseFee: ${baseFee}, quote.estimatedSlippage: ${quote.estimatedSlippage}`)
     return baseFee //.add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
 }
 
@@ -188,5 +188,5 @@ async function getAvnuQuotes(sell: EthOrStrk, sellAmount: BigNumber, takerAddres
         takerAddress: takerAddress
     }
     // We get the quotes for the amount we want to sell and then check if we make enough profit
-    return await fetchQuotes(params, avnuOptions)
+    return await getQuotes(params, avnuOptions)
 }

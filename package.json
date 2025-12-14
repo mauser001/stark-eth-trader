@@ -19,10 +19,10 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@avnu/avnu-sdk": "^3.1.1",
+    "@avnu/avnu-sdk": "^4.0.0",
     "@ethersproject/bignumber": "^5.8.0",
     "abi-wan-kanabi": "^2.2.4",
-    "ethers": "^6.15.0",
-    "starknet": "^7.6.4"
+    "ethers": "^6.16.0",
+    "starknet": "^8.9.1"
   }
 }
