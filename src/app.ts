@@ -90,6 +90,7 @@ async function run() {
                 timestamp: Date.now(),
                 expectedFees: quote.fees?.toString(),
                 expectedBuyAmount: quote.quote.buyAmount.toString(),
+                estimatedSlippage: quote.quote.estimatedSlippage,
                 expectedGasFees: quote.quote.gasFees.toString()
             },
             quote.matchedTx
