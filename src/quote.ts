@@ -26,9 +26,10 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
         let newBuyAmount = BigNumber.from("0")
         const matchedTx: string[] = []
         for (let i = unMatched.length - 1; i >= 0; i--) {
+            if (quote.quote) break;
             const testTx = unMatched[i]
             if (testTx.sell !== sell) {
-                const testRatio = getTxRatio(testTx.sell, BigNumber.from(testTx.sellAmount), BigNumber.from(testTx.buyAmount))
+                let testRatio = getTxRatio(testTx.sell, BigNumber.from(testTx.sellAmount), BigNumber.from(testTx.buyAmount))
                 if (!isGoodRatio(sell, testRatio, quote.ratio)) {
                     console.log(' tx has not a good ratio', sell, testTx.sellAmount, testTx.buyAmount, quote.ratio.toString(), testRatio.toString())
                     break
@@ -38,28 +39,31 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
                 newSellAmount = newSellAmount.add(BigNumber.from(testTx.sellAmount))
                 newBuyAmount = newBuyAmount.add(BigNumber.from(testTx.buyAmount))
                 matchedTx.push(testTx.hash)
+
+                if (matchedTx.length > 1) {
+                    console.log(`we found ${matchedTx.length} tx to combine`)
+                    const quotes: Quote[] = await getAvnuQuotes(sell, newBuyAmount, account.address, avnuOptions)
+                    const txSell = sell === 'eth' ? 'strk' : 'eth'
+                    const combinedTestTx: TxData = {
+                        sellAmount: newSellAmount.toString(),
+                        buyAmount: newBuyAmount.toString(),
+                        sell: txSell,
+                        hash: 'combined'
+                    }
+                    testRatio = getTxRatio(txSell, newSellAmount, newBuyAmount)
+                    // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
+                    quotes.forEach((q) => {
+                        const data = checkQuote(sell, q, testRatio, combinedTestTx, failedFees)
+                        if (data?.quote) {
+                            quote = { ...data, matchedTx }
+                            testRatio = quote.ratio
+                        }
+                    })
+                }
             }
         }
-        if (matchedTx.length > 1) {
-            console.log(`we found ${matchedTx.length} tx to combine`)
-            const quotes: Quote[] = await getAvnuQuotes(sell, newBuyAmount, account.address, avnuOptions)
-            const txSell = sell === 'eth' ? 'strk' : 'eth'
-            const testTx: TxData = {
-                sellAmount: newSellAmount.toString(),
-                buyAmount: newBuyAmount.toString(),
-                sell: txSell,
-                hash: 'combined'
-            }
-            let testRatio = getTxRatio(txSell, newSellAmount, newBuyAmount)
-            // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
-            quotes.forEach((q) => {
-                const data = checkQuote(sell, q, testRatio, testTx, failedFees)
-                if (data?.quote) {
-                    quote = { ...data, matchedTx }
-                    testRatio = quote.ratio
-                }
-            })
-        } else {
+
+        if (matchedTx.length <= 1) {
             console.log(`no new tx's found for selling ${sell}`)
         }
     }
@@ -76,7 +80,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
 
     let doTrade = false
     let wasMatch = false
-    console.log(`check quote for ${sell}, sell: ${sellAmount.toString()}, buy: ${buyAmount.toString()} -> ratio: ${tradeRatio.toString()}`)
+    console.log(`check quote for ${sell}, sell: ${sellAmount.toString()}, buy: ${buyAmount.toString()} -> ratio: ${tradeRatio.toString()}, estimatedFees: ${quote.gasFees.toString()}`)
     // Only if the quote is good enough we make more test
     if (!isGoodRatio(sell, ratio, tradeRatio)) {
         console.log(`no selling ${sell} because ratio is to low target: ${ratio.toString()}, trade: ${tradeRatio.toString()}`)
@@ -174,8 +178,8 @@ function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRa
 }
 
 function getFees(sell: EthOrStrk, quote: Quote, ratio?: BigNumber): BigNumber {
-    const baseFee = sell === 'eth' ? BigNumber.from(quote.gasFees).mul(ratio).div(RATIO_MULTI) : BigNumber.from(quote.gasFees)
-    console.log(`baseFee: ${baseFee}, quote.estimatedSlippage: ${quote.estimatedSlippage}`)
+    const baseFee = sell === 'strk' ? BigNumber.from(quote.gasFees).mul(RATIO_MULTI).div(ratio) : BigNumber.from(quote.gasFees)
+    console.log(`baseFee: ${baseFee}, quote.estimatedSlippage: ${quote.estimatedSlippage}, quote.gasFees: ${quote.gasFees}`)
     return baseFee //.add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
 }
 

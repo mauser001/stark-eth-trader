@@ -23,6 +23,6 @@
     "@ethersproject/bignumber": "^5.8.0",
     "abi-wan-kanabi": "^2.2.4",
     "ethers": "^6.16.0",
-    "starknet": "^8.9.1"
+    "starknet": "^8.9.2"
   }
 }
