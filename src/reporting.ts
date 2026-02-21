@@ -15,7 +15,7 @@ async function analyseTades() {
 
     const firstMatchedTradeIndex = transactions.findIndex(({ matchedBy }, i) => i > 0 && !!matchedBy)
     console.log('Trades unmatched: ', firstMatchedTradeIndex - 1, ' of ', transactions.length)
-    transactions = transactions.slice(firstMatchedTradeIndex - 1)
+    // transactions = transactions.slice(firstMatchedTradeIndex - 1)
     const firstTrade = transactions[0]
     printBalance('Initial Balance', firstTrade.balanceEth, firstTrade.balanceStrk, new Date(firstTrade.timestamp).toDateString())
     const lastTrade = transactions[transactions.length - 1]
@@ -51,10 +51,20 @@ async function analyseTades() {
         strkSell: 0,
         strkMatched: 0,
     }
+    const soledEthPerMatchedTrade = {} as Record<string, BigNumber>
+    const boughtEthPerMatchedTrade = {} as Record<string, BigNumber>
+    let totalSoldEth = BigNumber.from('0');
+    let totalBoughtEth = BigNumber.from('0');
     transactions.slice(1).forEach(t => {
         if (t.sell === 'eth' && !t.matchedBy) {
             const ratio = BigNumber.from(t.buyAmount).div(BigNumber.from(t.sellAmount))
-            console.log('Ratio: ', ratio.toString(), new Date(t.timestamp).toDateString())
+            console.log('Ratio: ', ratio.toString(), new Date(t.timestamp).toDateString(), 'Sell Eth: ', formatEther(t.sellAmount), ' Buy Strk: ', formatEther(t.buyAmount))
+        } else if (t.sell === 'eth') {
+            totalSoldEth = totalSoldEth.add(BigNumber.from(t.sellAmount))
+            soledEthPerMatchedTrade[t.matchedBy] = soledEthPerMatchedTrade[t.matchedBy] ? soledEthPerMatchedTrade[t.matchedBy].add(BigNumber.from(t.sellAmount)) : BigNumber.from(t.sellAmount)
+        } else if (t.sell === 'strk') {
+            totalBoughtEth = totalBoughtEth.add(BigNumber.from(t.buyAmount))
+            boughtEthPerMatchedTrade[t.hash] = BigNumber.from(t.buyAmount)
         }
         if (t.sell === 'eth') {
             count.ethSell++
@@ -68,6 +78,24 @@ async function analyseTades() {
             }
         }
     })
+    for (const matchedHash in soledEthPerMatchedTrade) {
+        const soldEth = soledEthPerMatchedTrade[matchedHash]
+        const boughtEth = boughtEthPerMatchedTrade[matchedHash]
+        if (!boughtEth) {
+            console.warn(`No boughtEth for matched trade ${matchedHash}`)
+        } else if (soldEth.gt(boughtEth)) {
+            console.warn(`We sold more Eth than we bought by ${formatEther(soldEth.sub(boughtEth).toString())} Eth`)
+        } else {
+            console.log(`We bought more Eth than we sold by ${formatEther(boughtEth.sub(soldEth).toString())} Eth`)
+        }
+    }
+    if (!totalSoldEth || !totalBoughtEth) {
+        console.warn('No sold or bought Eth, cannot compare')
+    } else if (totalSoldEth.gt(totalBoughtEth)) {
+        console.warn(`In total we sold more Eth than we bought by ${formatEther(totalSoldEth.sub(totalBoughtEth).toString())} Eth`)
+    } else {
+        console.log(`In total we bought more Eth than we sold by ${formatEther(totalBoughtEth.sub(totalSoldEth).toString())} Eth`)
+    }
     console.log(`Tx Count-> Eth: ${count.ethSell} (matched: ${count.ethMatched}) | Strk: ${count.strkSell} (matched: ${count.strkMatched})`)
 }
 

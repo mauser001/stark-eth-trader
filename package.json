@@ -10,7 +10,7 @@
     "report-prod": "npm run build && node --env-file=prod.env dist/reporting.js",
     "extract-prod": "npm run build && node --env-file=prod.env dist/extractMatched.js",
     "combine-prod": "npm run build && node --env-file=prod.env dist/combine.js",
-    "sort-prod": "node --env-file=prod.env dist/sortTrades.js"
+    "sort-prod": "npm run build && node --env-file=prod.env dist/sortTrades.js"
   },
   "keywords": [],
   "author": "",
@@ -19,7 +19,7 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@avnu/avnu-sdk": "^4.0.0",
+    "@avnu/avnu-sdk": "^4.0.1",
     "@ethersproject/bignumber": "^5.8.0",
     "abi-wan-kanabi": "^2.2.4",
     "ethers": "^6.16.0",

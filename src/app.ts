@@ -75,7 +75,7 @@ async function run() {
     if (quote?.quote) {
         console.log("We found a good trade matching: ", quote.sell, quote.matchedTx?.join(","), BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
 
-        const response = await executeSwap({ provider: account, quote: quote.quote, executeApprove: true, slippage: 0.01 }, avnuOptions)
+        const response = await executeSwap({ provider: account, quote: quote.quote, executeApprove: true, slippage: quote.quote.estimatedSlippage || 0.005 }, avnuOptions)
         console.log("tx hash of new trade: ", response.transactionHash)
         let matchedBy: string | undefined = undefined
         if (quote.wasMatch && quote.matchedTx?.length) {

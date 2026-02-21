@@ -59,6 +59,9 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
                             testRatio = quote.ratio
                         }
                     })
+                    if (!quote?.quote) {
+                        await new Promise((resolve) => setTimeout(() => resolve(true), 500))
+                    }
                 }
             }
         }
@@ -113,7 +116,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
     }
     // if there is an open tx where we sold eth then we compare the quote with it
     if (!tx.matchedBy && tx.sell !== sell) {
-        if (checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount, failedFees, tradeRatio)) {
+        if (checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount, failedFees, tradeRatio, quote.estimatedSlippage)) {
             doTrade = true
             wasMatch = true
         } else {
@@ -124,7 +127,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
         }
         // If not we compare the ratios 
     } else {
-        if (fixedBuyAmount && checkNextTradeDifference(sell, fixedBuyAmount, ratio, tradeRatio)) {
+        if (fixedBuyAmount && checkNextTradeDifference(sell, fixedBuyAmount, ratio, tradeRatio, quote.estimatedSlippage)) {
             doTrade = true
         } else {
             console.log(`no selling ${sell} as trade is not good enough with fixed trade amount: ${fixedBuyAmount.toString()}`)
@@ -154,16 +157,29 @@ function addPercentPoint(amount: BigNumber, percent: BigNumber): BigNumber {
     return amount.mul(oneThousand.add(percent)).div(oneThousand)
 }
 
-function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber, failedFees: BigNumber, ratio: BigNumber) {
+function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber, failedFees: BigNumber, ratio: BigNumber, slippage = 0.005) {
     const ajustedFailedFees = sell === 'eth' || failedFees.eq(BigNumber.from('0')) ? failedFees : applyRatio(ratio, failedFees, undefined)
     const totalTarget = addPercentPoint(targetAmount, TRADE_DIFFERENCE_1000).add(ajustedFailedFees)
-    const isGood = totalTarget.lt(tradeAmount)
+    let isGood = totalTarget.lt(tradeAmount)
     const dif = tradeAmount.mul(1000).div(totalTarget);
     console.log(`checkTxGain isGood: ${isGood} sell:${sell}, target: ${targetAmount.toString()}, sell percent: ${TRADE_DIFFERENCE_1000}, total target: ${totalTarget.toString()}, with failed fees: ${failedFees.toString()}, ajustedFailedFees: ${ajustedFailedFees.toString()}, trade: ${tradeAmount.toString()}, div: ${dif.toString()}%`)
+    if (isGood) {
+        const withSlippage = addSlippage(totalTarget, slippage)
+        isGood = withSlippage.lt(tradeAmount)
+        console.log(`checkTxGain isGood: ${isGood} after slippage: ${slippage}, target with Slippage: ${withSlippage.toString()}`)
+    }
+
     return isGood
 }
 
-function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRatio: BigNumber, newRatio: BigNumber) {
+function addSlippage(amount: BigNumber, slippage = 0.01) {
+    const multi = 100000;
+    const bigSlippage = BigNumber.from(Math.floor(multi * slippage));
+    const toAdd = amount.mul(bigSlippage).div(BigNumber.from(multi));
+    return amount.add(toAdd);
+}
+
+function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRatio: BigNumber, newRatio: BigNumber, slippage = 0.005) {
     let withOldRatio: BigNumber
     if (sell === 'eth') {
         withOldRatio = tradeAmount.mul(oldRatio).div(newRatio)
@@ -171,9 +187,15 @@ function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRa
         withOldRatio = tradeAmount.mul(newRatio).div(oldRatio)
     }
     const totalTarget = addPercentPoint(withOldRatio, TRADE_DIFFERENCE_1000)
-    const isGood = totalTarget.lt(tradeAmount)
+    let isGood = totalTarget.lt(tradeAmount)
     const dif = tradeAmount.mul(1000).div(totalTarget);
     console.log(`checkNextTradeDifference isGood: ${isGood} sell:${sell} with old ratio: ${withOldRatio} min percent gain: ${TRADE_DIFFERENCE_1000} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}, div: ${dif.toString()}%`)
+    if (isGood) {
+        const withSlippage = addSlippage(totalTarget, slippage)
+        isGood = withSlippage.lt(tradeAmount)
+        console.log(`checkNextTradeDifference isGood: ${isGood} after slippage: ${slippage}, target with Slippage: ${withSlippage.toString()}`)
+    }
+
     return isGood
 }
 
