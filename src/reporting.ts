@@ -81,13 +81,13 @@ function analyseRatioAndTotals(transactions: ReportTransaction[]) {
 
 function haveBothChangedDirection(t: ReportTransaction, compare: ReportTransaction): ReportTransaction {
     if (t.balanceEth.gt(compare.balanceEth) && t.balanceStrk.gt(compare.balanceStrk)) {
-        printBalance('< Blances have increased since', t.balanceEth, t.balanceStrk, t.date);
+        printBalance('< Blances have decreased', t.balanceEth, t.balanceStrk, t.date);
         const diffEth = t.balanceEth.sub(compare.balanceEth)
         const diffStrk = t.balanceStrk.sub(compare.balanceStrk)
         console.log(`---< We have less ${formatBig(diffEth)} Eth and ${formatBig(diffStrk)} Strk since then`)
         return t;
     } else if (t.balanceEth.lt(compare.balanceEth) && t.balanceStrk.lt(compare.balanceStrk)) {
-        printBalance('> Blances have increased since', t.balanceEth, t.balanceStrk, t.date);
+        printBalance('> Blances have increased', t.balanceEth, t.balanceStrk, t.date);
         const diffEth = compare.balanceEth.sub(t.balanceEth)
         const diffStrk = compare.balanceStrk.sub(t.balanceStrk)
         console.log(`---> We have more ${formatBig(diffEth)} Eth and ${formatBig(diffStrk)} Strk since then`)
