@@ -11,13 +11,20 @@ async function combine() {
     transactions = transactions.reduce((list, t) => {
         if (!list.length) {
             return [t]
+        } else if (t.matchedBy) {
+            return [...list, t]
         }
-        const last = list[list.length - 1]
+        const last = list.findLast(lt => !lt.matchedBy && lt.sell === t.sell)
+        if (!last) {
+            console.log('no last found')
+            return [...list, t]
+        }
         const lastRatio = BigNumber.from(last.buyAmount).div(BigNumber.from(last.sellAmount))
         const currentRatio = BigNumber.from(t.buyAmount).div(BigNumber.from(t.sellAmount))
         if (lastRatio.lt(currentRatio)) {
             return [...list, t]
         }
+        console.log('combining', last.hash, 'and', t.hash, 'with ratio', lastRatio.toString(), 'and', currentRatio.toString())
         return [
             ...list.slice(0, list.length - 1),
             {

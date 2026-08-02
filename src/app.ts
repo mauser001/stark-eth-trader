@@ -10,12 +10,14 @@ import { addTransaction, checkTransactions, getBlock, getFailedTransactions } fr
 import { getRatio } from './math';
 import { MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT } from './conts';
 import { QuoteData } from './types';
+import { notifyRunSucceeded, restartEthernetAdapterIfNetworkIssue } from './ethernet';
 
 const useTestnet = process.env.USE_TESTNET === 'true'
 const chainId = useTestnet ? constants.StarknetChainId.SN_SEPOLIA : constants.StarknetChainId.SN_MAIN
 const nodeUrl = process.env.NODE_RPC || provider.getDefaultNodeUrl(useTestnet ? constants.NetworkName.SN_SEPOLIA : constants.NetworkName.SN_MAIN)
 const avnuOptions: AvnuOptions = { baseUrl: useTestnet ? 'https://goerli.api.avnu.fi' : 'https://starknet.api.avnu.fi' }
 let latestBlock = 0
+
 async function run() {
     console.log(`${new Date().toLocaleString()} run useTestnet: ${useTestnet}, chainId: ${chainId}`)
     // Get account
@@ -52,7 +54,7 @@ async function run() {
 
     // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell e defined percentage
     const sellStrk = !tx.matchedBy && tx.sell === 'eth' ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), SELL_PERCENT, MIN_SEL_AMOUNT_STRK)
-    let quote: QuoteData;
+    let quote: QuoteData | undefined = undefined;
     if (sellStrk)
         quote = await getQuote('strk', sellStrk, account, avnuOptions, ratio, tx, unMatched, failedFees)
     else
@@ -109,7 +111,13 @@ function getSellAmount(balance: BigNumber, percentage: BigNumber, minAmount: Big
 async function loop() {
     try {
         await run()
+        notifyRunSucceeded()
     } catch (e) {
+        try {
+            await restartEthernetAdapterIfNetworkIssue(e)
+        } catch (restartError) {
+            console.warn('Ethernet adapter restart failed: ', restartError)
+        }
         try {
             console.warn('run failed: ', JSON.stringify(e))
         } catch {
