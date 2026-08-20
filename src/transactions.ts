@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { getBalances } from "./balances";
 import { BigNumber } from "@ethersproject/bignumber";
 import { FailedTransactions, TxData } from "./types";
+import { getBestTx } from "./quote";
 
 const NOT_FOUND = 'NOT_FOUND' as const;
 
@@ -201,23 +202,18 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
     if (needToSave) {
         await saveTransactionData(transactions)
     }
+    const unMatched = transactions.filter((t) => !t.matchedBy)
     let tx: TxData | undefined = undefined
     if (finished && latest.balanceEth) {
-        // all transactions are confirmed, so we get the most recent tx that was not filled
-        for (let i = transactions.length - 1; i >= 0; i--) {
-            if (!tx || !transactions[i].matchedBy) {
-                tx = transactions[i]
-                if (!tx.matchedBy) {
-                    break
-                }
-            }
-        }
+        // all transactions are confirmed, so we try to match the open position closest to being matchable first,
+        // falling back to the latest tx if nothing is open
+        tx = getBestTx(unMatched) ?? transactions[transactions.length - 1]
     }
 
     return {
         finished,
         tx,
         latest,
-        unMatched: transactions.filter((t) => !t.matchedBy)
+        unMatched
     }
 }

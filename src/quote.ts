@@ -5,10 +5,10 @@ import { RATIO_MULTI, TRADE_DIFFERENCE_1000 } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
-export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched?: TxData[], failedFees: BigNumber = BigNumber.from('0')): Promise<QuoteData> {
+export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched: TxData[] = [], failedFees: BigNumber = BigNumber.from('0')): Promise<QuoteData | undefined> {
     // We get the quotes for the amount we want to sell and then check if we make enough profit
     const quotes: Quote[] = await getAvnuQuotes(sell, sellAmount, account.address, avnuOptions)
-    let quote: QuoteData
+    let quote: QuoteData | undefined
     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
     quotes.forEach((q) => {
         const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees)
@@ -28,7 +28,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
         for (let i = unMatched.length - 1; i >= 0; i--) {
             if (quote.quote) break;
             const testTx = unMatched[i]
-            if (testTx.sell !== sell) {
+            if (testTx?.sell && testTx.sell !== sell) {
                 let testRatio = getTxRatio(testTx.sell, BigNumber.from(testTx.sellAmount), BigNumber.from(testTx.buyAmount))
                 if (!isGoodRatio(sell, testRatio, quote.ratio)) {
                     console.log(' tx has not a good ratio', sell, testTx.sellAmount, testTx.buyAmount, quote.ratio.toString(), testRatio.toString())
@@ -115,7 +115,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
         return
     }
     // if there is an open tx where we sold eth then we compare the quote with it
-    if (!tx.matchedBy && tx.sell !== sell) {
+    if (tx.sellAmount !== undefined && !tx.matchedBy && tx.sell !== sell) {
         if (checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount, failedFees, tradeRatio, quote.estimatedSlippage)) {
             doTrade = true
             wasMatch = true
@@ -144,12 +144,44 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
     }
 }
 
-function getTxRatio(sell: EthOrStrk, sellAmount: BigNumber, buyAmount: BigNumber) {
+export function getTxRatio(sell: EthOrStrk, sellAmount: BigNumber, buyAmount: BigNumber) {
     return sell === 'eth' ? getRatio(buyAmount, sellAmount) : getRatio(sellAmount, buyAmount)
 }
 
-function isGoodRatio(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNumber) {
+export function isGoodRatio(sell: EthOrStrk, targetRatio: BigNumber, tradeRatio: BigNumber) {
     return sell === 'eth' ? targetRatio.lt(tradeRatio) : targetRatio.gt(tradeRatio)
+}
+
+// picks the most demanding ratio (highest when about to sell eth, lowest when about to sell strk) among the given transactions,
+// so a single small/noisy trade can't lower the bar we compare new quotes against
+export function getBestRatio(sell: EthOrStrk, txs: TxData[]): BigNumber | undefined {
+    let best: BigNumber | undefined
+    for (const t of txs) {
+        if (!t.sell || !t.sellAmount || !t.buyAmount) continue
+        const txRatio = getTxRatio(t.sell, BigNumber.from(t.sellAmount), BigNumber.from(t.buyAmount))
+        if (!best || isGoodRatio(sell, best, txRatio)) {
+            best = txRatio
+        }
+    }
+    return best
+}
+
+// picks the open position whose own ratio is closest to being matched right now (same extreme as getBestRatio,
+// e.g. the highest sell ratio among eth sells), since that's the trade needing the smallest market move to close,
+// so we prioritize attempting the one most likely to actually fill soon instead of a long-shot older one.
+// Assumes the given txs were all sold in the same direction, which holds since they only get matched together
+export function getBestTx(txs: TxData[]): TxData | undefined {
+    let best: TxData | undefined
+    let bestRatio: BigNumber | undefined
+    for (const t of txs) {
+        if (!t.sell || !t.sellAmount || !t.buyAmount) continue
+        const txRatio = getTxRatio(t.sell, BigNumber.from(t.sellAmount), BigNumber.from(t.buyAmount))
+        if (!best || isGoodRatio(t.sell, bestRatio!, txRatio)) {
+            best = t
+            bestRatio = txRatio
+        }
+    }
+    return best
 }
 
 function addPercentPoint(amount: BigNumber, percent: BigNumber): BigNumber {
@@ -199,7 +231,7 @@ function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRa
     return isGood
 }
 
-function getFees(sell: EthOrStrk, quote: Quote, ratio?: BigNumber): BigNumber {
+function getFees(sell: EthOrStrk, quote: Quote, ratio: BigNumber): BigNumber {
     const baseFee = sell === 'strk' ? BigNumber.from(quote.gasFees).mul(RATIO_MULTI).div(ratio) : BigNumber.from(quote.gasFees)
     console.log(`baseFee: ${baseFee}, quote.estimatedSlippage: ${quote.estimatedSlippage}, quote.gasFees: ${quote.gasFees}`)
     return baseFee //.add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
@@ -208,8 +240,8 @@ function getFees(sell: EthOrStrk, quote: Quote, ratio?: BigNumber): BigNumber {
 async function getAvnuQuotes(sell: EthOrStrk, sellAmount: BigNumber, takerAddress: string, avnuOptions: AvnuOptions) {
     const params: QuoteRequest = {
         size: 5,
-        sellTokenAddress: sell === 'eth' ? process.env.ETH_TOKEN : process.env.STARK_TOKEN,
-        buyTokenAddress: sell !== 'eth' ? process.env.ETH_TOKEN : process.env.STARK_TOKEN,
+        sellTokenAddress: (sell === 'eth' ? process.env.ETH_TOKEN : process.env.STARK_TOKEN) as string,
+        buyTokenAddress: (sell !== 'eth' ? process.env.ETH_TOKEN : process.env.STARK_TOKEN) as string,
         sellAmount: BigInt(sellAmount.toString()),
         takerAddress: takerAddress
     }

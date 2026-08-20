@@ -19,4 +19,5 @@ export function applyRatio(ratio: BigNumber, strk?: BigNumber, eth?: BigNumber) 
     if (eth) {
         return eth.mul(ratio).div(RATIO_MULTI)
     }
+    throw new Error('Either strk or eth must be provided')
 }

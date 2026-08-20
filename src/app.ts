@@ -3,7 +3,7 @@ import {
     executeSwap,
 } from '@avnu/avnu-sdk';
 import { constants, provider } from 'starknet'
-import { getQuote } from './quote';
+import { getBestRatio, getQuote } from './quote';
 import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
 import { addTransaction, checkTransactions, getBlock, getFailedTransactions } from './transactions';
@@ -49,27 +49,28 @@ async function run() {
         eth = tx.sell === 'eth' ? BigNumber.from(tx.sellAmount) : BigNumber.from(tx.buyAmount)
         strk = tx.sell === 'strk' ? BigNumber.from(tx.sellAmount) : BigNumber.from(tx.buyAmount)
     }
-    // Calculate the strk - eth ratio ... this ratio will be used to compare to the quotes
-    let ratio = getRatio(strk, eth)
+    // ratio of the open tx we'd directly match, used only when we try to fill that exact tx
+    const matchRatio = getRatio(strk, eth)
+    // the most demanding ratio seen across the latest + still open trades, used for regular (non matching) sells
+    // so a single small/noisy trade can't make the bar we compare against worse than it actually is
+    const recentTxs = [latest, ...unMatched]
 
-    // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell e defined percentage
-    const sellStrk = !tx.matchedBy && tx.sell === 'eth' ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), SELL_PERCENT, MIN_SEL_AMOUNT_STRK)
+    // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell a defined percentage
+    const isEthMatch = !tx.matchedBy && tx.sell === 'eth'
+    const sellStrk = isEthMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), SELL_PERCENT, MIN_SEL_AMOUNT_STRK)
+    const strkRatio = isEthMatch ? matchRatio : getBestRatio('strk', recentTxs) ?? matchRatio
     let quote: QuoteData | undefined = undefined;
     if (sellStrk)
-        quote = await getQuote('strk', sellStrk, account, avnuOptions, ratio, tx, unMatched, failedFees)
+        quote = await getQuote('strk', sellStrk, account, avnuOptions, strkRatio, tx, unMatched, failedFees)
     else
         console.log('Not enough strk balance: ', latest.balanceStrk)
     if (!quote?.quote) {
-        // if we don't find a good quote for eth we try to get strk for a good price
-        const sellEth = !tx.matchedBy && tx.sell === 'strk' ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), SELL_PERCENT, MIN_SEL_AMOUNT_ETH)
-        if (tx.sell === 'eth' && !tx.matchedBy) {
-            // get ratio from latest trade if the tx to match was an eth tx
-            eth = latest.sell === 'eth' ? BigNumber.from(latest.sellAmount) : BigNumber.from(latest.buyAmount)
-            strk = latest.sell === 'strk' ? BigNumber.from(latest.sellAmount) : BigNumber.from(latest.buyAmount)
-            ratio = getRatio(strk, eth)
-        }
+        // if we don't find a good quote for strk we try to get eth for a good price
+        const isStrkMatch = !tx.matchedBy && tx.sell === 'strk'
+        const sellEth = isStrkMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), SELL_PERCENT, MIN_SEL_AMOUNT_ETH)
+        const ethRatio = isStrkMatch ? matchRatio : getBestRatio('eth', recentTxs) ?? matchRatio
         if (sellEth)
-            quote = await getQuote('eth', sellEth, account, avnuOptions, ratio, tx, unMatched, failedFees)
+            quote = await getQuote('eth', sellEth, account, avnuOptions, ethRatio, tx, unMatched, failedFees)
         else
             console.log('Not enough ethe balance: ', latest.balanceStrk)
     }
