@@ -18,7 +18,8 @@ export type TxData = {
     estimatedSlippage?: number,
     timestamp?: number,
     block?: number,
-    failedFeesIncluded?: string
+    failedFeesIncluded?: string,
+    actualFees?: string
 }
 
 export type QuoteData = {

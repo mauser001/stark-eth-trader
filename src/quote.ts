@@ -1,17 +1,17 @@
 import { AvnuOptions, Quote, QuoteRequest, getQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { RATIO_MULTI, TRADE_DIFFERENCE_1000 } from "./conts"
+import { MIN_GAS_FEES, TRADE_DIFFERENCE_1000 } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
-export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched: TxData[] = [], failedFees: BigNumber = BigNumber.from('0')): Promise<QuoteData | undefined> {
+export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched: TxData[] = [], failedFees: BigNumber = BigNumber.from('0'), maxTrackedFee?: BigNumber): Promise<QuoteData | undefined> {
     // We get the quotes for the amount we want to sell and then check if we make enough profit
     const quotes: Quote[] = await getAvnuQuotes(sell, sellAmount, account.address, avnuOptions)
     let quote: QuoteData | undefined
     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
     quotes.forEach((q) => {
-        const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees)
+        const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees, maxTrackedFee)
         if (data) {
             quote = data
             if (quote.wasMatch) {
@@ -53,7 +53,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
                     testRatio = getTxRatio(txSell, newSellAmount, newBuyAmount)
                     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
                     quotes.forEach((q) => {
-                        const data = checkQuote(sell, q, testRatio, combinedTestTx, failedFees)
+                        const data = checkQuote(sell, q, testRatio, combinedTestTx, failedFees, maxTrackedFee)
                         if (data?.quote) {
                             quote = { ...data, matchedTx }
                             testRatio = quote.ratio
@@ -74,7 +74,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
 }
 
 // check the quote for selling 
-function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData, failedFees: BigNumber): QuoteData | undefined {
+function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData, failedFees: BigNumber, maxTrackedFee?: BigNumber): QuoteData | undefined {
     const buyAmount = BigNumber.from(quote.buyAmount)
     const sellAmount = BigNumber.from(quote.sellAmount)
     // calculate the ratio of the quote
@@ -90,8 +90,8 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
         return
     }
     console.log(`maybe ${sell} because ratio is ok target: ${ratio.toString()}, trade: ${tradeRatio.toString()}`)
-    // Let's get the fees and make a quick check if the fees are higher then the eth we get (fees are in eth)
-    const fees = getFees(sell, quote, ratio)
+    // Let's get the fees and make a quick check if the fees are higher then the buy amount
+    const fees = getFees(sell, quote, ratio, maxTrackedFee)
     if (fees.gte(buyAmount)) {
         console.log(`no selling ${sell} because fees to high: ${fees.toString()}`)
         if (!tx.matchedBy && tx.sell !== sell) {
@@ -231,10 +231,15 @@ function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRa
     return isGood
 }
 
-function getFees(sell: EthOrStrk, quote: Quote, ratio: BigNumber): BigNumber {
-    const baseFee = sell === 'strk' ? BigNumber.from(quote.gasFees).mul(RATIO_MULTI).div(ratio) : BigNumber.from(quote.gasFees)
-    console.log(`baseFee: ${baseFee}, quote.estimatedSlippage: ${quote.estimatedSlippage}, quote.gasFees: ${quote.gasFees}`)
-    return baseFee //.add(BigNumber.from(quote.avnuFees)).add(BigNumber.from(quote.integratorFees))
+function getFees(sell: EthOrStrk, quote: Quote, ratio: BigNumber, maxTrackedFee?: BigNumber): BigNumber {
+    // avnu always quotes gasFees in STRK (FRI), regardless of sell/buy token or fee.feeToken
+    const gasFeesStrk = BigNumber.from(quote.gasFees)
+    // quoted gas fees can be underestimated, so we never go below the highest fee actually paid recently (falls back to MIN_GAS_FEES)
+    const floor = maxTrackedFee && maxTrackedFee.gt(MIN_GAS_FEES) ? maxTrackedFee : MIN_GAS_FEES
+    const flooredFeesStrk = gasFeesStrk.gt(floor) ? gasFeesStrk : floor
+    const baseFee = sell === 'strk' ? applyRatio(ratio, flooredFeesStrk) : flooredFeesStrk
+    console.log(`baseFee: ${baseFee}, gasFeesStrk: ${gasFeesStrk}, floor: ${floor}, quote.estimatedSlippage: ${quote.estimatedSlippage}`)
+    return baseFee
 }
 
 async function getAvnuQuotes(sell: EthOrStrk, sellAmount: BigNumber, takerAddress: string, avnuOptions: AvnuOptions) {

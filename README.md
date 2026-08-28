@@ -35,6 +35,7 @@ Used tech / Prerequisites:
 - MIN_SEL_AMOUNT_ETH - min amount of eth to sell (if sell percent is lower we use this amount, if not enough balance in wallet we don't trade)
 - MIN_SEL_AMOUNT_STRK - min amount of strk to sell
 - TRADE_DIFFERENCE_1000 - difference needed for a good trade in 10th of a percent
+- MIN_GAS_FEES - if gas fees fluctuate use to set min gas for logic
 - NODE_RPC - will be used to replace the default node rpc
 - TRADE_FILE - relative path to the trading data file, make sure it exists and has the initial content:
 ```json

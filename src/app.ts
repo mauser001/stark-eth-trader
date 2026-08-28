@@ -24,7 +24,7 @@ async function run() {
     const { account, provider } = await getAccount({ chainId, nodeUrl })
 
     // First let's get the latest transactions
-    const { finished, tx, unMatched, latest } = await checkTransactions(provider, account)
+    const { finished, tx, unMatched, latest, maxFee } = await checkTransactions(provider, account)
     if (!finished || !tx) {
         return
     }
@@ -61,7 +61,7 @@ async function run() {
     const strkRatio = isEthMatch ? matchRatio : getBestRatio('strk', recentTxs) ?? matchRatio
     let quote: QuoteData | undefined = undefined;
     if (sellStrk)
-        quote = await getQuote('strk', sellStrk, account, avnuOptions, strkRatio, tx, unMatched, failedFees)
+        quote = await getQuote('strk', sellStrk, account, avnuOptions, strkRatio, tx, unMatched, failedFees, maxFee)
     else
         console.log('Not enough strk balance: ', latest.balanceStrk)
     if (!quote?.quote) {
@@ -70,7 +70,7 @@ async function run() {
         const sellEth = isStrkMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), SELL_PERCENT, MIN_SEL_AMOUNT_ETH)
         const ethRatio = isStrkMatch ? matchRatio : getBestRatio('eth', recentTxs) ?? matchRatio
         if (sellEth)
-            quote = await getQuote('eth', sellEth, account, avnuOptions, ethRatio, tx, unMatched, failedFees)
+            quote = await getQuote('eth', sellEth, account, avnuOptions, ethRatio, tx, unMatched, failedFees, maxFee)
         else
             console.log('Not enough ethe balance: ', latest.balanceStrk)
     }

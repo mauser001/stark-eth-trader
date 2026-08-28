@@ -71,6 +71,19 @@ export async function getBlock(provider: RpcProvider) {
     return (await provider.getBlockLatestAccepted()).block_number
 }
 
+// highest fee actually paid across the last 10 transactions, used as a floor for our fee estimates
+function getMaxTrackedFee(transactions: TxData[]): BigNumber | undefined {
+    let max: BigNumber | undefined
+    for (const t of transactions.slice(-10)) {
+        if (!t.actualFees) continue
+        const fee = BigNumber.from(t.actualFees)
+        if (!max || fee.gt(max)) {
+            max = fee
+        }
+    }
+    return max
+}
+
 export const DATA_PATH = process.env.TRADE_FILE
 
 
@@ -138,6 +151,9 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
         if (latest.status !== execution_status) {
             latest.status = execution_status
             needToSave = true
+        }
+        if (latest.status === 'SUCCEEDED' && needToSave) {
+            latest.actualFees = (await getFees(latest.hash, provider)).toString()
         }
         if (latest.status === 'REVERTED') {
             await trackFailedTransaction(latest.hash, provider)
@@ -214,6 +230,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
         finished,
         tx,
         latest,
-        unMatched
+        unMatched,
+        maxFee: getMaxTrackedFee(transactions)
     }
 }
