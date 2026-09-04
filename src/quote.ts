@@ -91,7 +91,11 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
     }
     console.log(`maybe ${sell} because ratio is ok target: ${ratio.toString()}, trade: ${tradeRatio.toString()}`)
     // Let's get the fees and make a quick check if the fees are higher then the buy amount
-    const fees = getFees(sell, quote, ratio, maxTrackedFee)
+    const feesStrk = getFeesStrk(quote, ratio, maxTrackedFee)
+    // convert the strk fee into the buy token so it can be deducted from the buy amount below.
+    // for strk sells that is applyRatio(ratio, strk) - and applyRatio(ratio, undefined, x) maps back with the
+    // same rounding, so the buy-token fee converts losslessly back to strk when the trade gets tracked
+    const fees = sell === 'strk' ? applyRatio(ratio, feesStrk) : feesStrk
     if (fees.gte(buyAmount)) {
         console.log(`no selling ${sell} because fees to high: ${fees.toString()}`)
         if (!tx.matchedBy && tx.sell !== sell) {
@@ -139,7 +143,8 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
             ratio: tradeRatio,
             wasMatch,
             sell,
-            fees
+            fees,
+            feesStrk
         }
     }
 }
@@ -231,7 +236,8 @@ function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRa
     return isGood
 }
 
-function getFees(sell: EthOrStrk, quote: Quote, ratio: BigNumber, maxTrackedFee?: BigNumber): BigNumber {
+// fee estimate in strk; avnu quotes the gas part in strk, then we apply our floor and add the tip on top
+function getFeesStrk(quote: Quote, ratio: BigNumber, maxTrackedFee?: BigNumber): BigNumber {
     // avnu always quotes gasFees in STRK (FRI), regardless of sell/buy token or fee.feeToken
     const gasFeesStrk = BigNumber.from(quote.gasFees)
     // quoted gas fees can be underestimated, so we never go below the highest fee actually paid recently (falls back to MIN_GAS_FEES)
@@ -239,9 +245,8 @@ function getFees(sell: EthOrStrk, quote: Quote, ratio: BigNumber, maxTrackedFee?
     const flooredFeesStrk = gasFeesStrk.gt(floor) ? gasFeesStrk : floor
     // the priority tip is paid on top at execution time and isn't part of avnu's quoted gasFees
     const totalFeesStrk = flooredFeesStrk.add(TIP_FEE_STRK)
-    const baseFee = sell === 'strk' ? applyRatio(ratio, totalFeesStrk) : totalFeesStrk
-    console.log(`baseFee: ${baseFee}, gasFeesStrk: ${gasFeesStrk}, floor: ${floor}, tipFeeStrk: ${TIP_FEE_STRK.toString()}, quote.estimatedSlippage: ${quote.estimatedSlippage}`)
-    return baseFee
+    console.log(`feesStrk: ${totalFeesStrk}, gasFeesStrk: ${gasFeesStrk}, floor: ${floor}, tipFeeStrk: ${TIP_FEE_STRK.toString()}, quote.estimatedSlippage: ${quote.estimatedSlippage}`)
+    return totalFeesStrk
 }
 
 async function getAvnuQuotes(sell: EthOrStrk, sellAmount: BigNumber, takerAddress: string, avnuOptions: AvnuOptions) {

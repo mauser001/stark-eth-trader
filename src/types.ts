@@ -26,6 +26,8 @@ export type TxData = {
     balanceEth?: string,
     balanceStrk?: string,
     expectedFees?: string,
+    // same fee estimate as expectedFees but always in strk, so trades can be compared regardless of direction
+    expectedFeesStrk?: string,
     expectedMaxFees?: string,
     resourceBounds?: StoredResourceBounds,
     expectedBuyAmount?: string,
@@ -43,7 +45,10 @@ export type QuoteData = {
     wasMatch?: boolean,
     matchedTx?: string[],
     sell?: EthOrStrk,
-    fees?: BigNumber
+    // fee estimate in the buy token, same value that gets deducted from the buy amount in checkQuote
+    fees?: BigNumber,
+    // the same fee estimate in strk
+    feesStrk?: BigNumber
 }
 
 export type FailedTransactions = {
