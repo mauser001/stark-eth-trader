@@ -1,14 +1,14 @@
 import {
     AvnuOptions,
-    executeSwap,
+    quoteToCalls,
 } from '@avnu/avnu-sdk';
 import { constants, provider } from 'starknet'
 import { getBestRatio, getQuote } from './quote';
 import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
 import { addTransaction, checkTransactions, getBlock, getFailedTransactions } from './transactions';
-import { getRatio } from './math';
-import { MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT } from './conts';
+import { getMaxTotalFee, getRatio, serializeResourceBounds } from './math';
+import { FEE_BUFFER_1000, MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TIP } from './conts';
 import { QuoteData } from './types';
 import { notifyRunSucceeded, restartEthernetAdapterIfNetworkIssue } from './ethernet';
 
@@ -77,20 +77,38 @@ async function run() {
     if (quote?.quote) {
         console.log("We found a good trade matching: ", quote.sell, quote.matchedTx?.join(","), BigNumber.from(quote.quote.sellAmount).toString(), BigNumber.from(quote.quote.buyAmount).toString(), BigNumber.from(quote.quote.gasFees).toString())
 
-        const response = await executeSwap({ provider: account, quote: quote.quote, executeApprove: true, slippage: quote.quote.estimatedSlippage || 0.005 }, avnuOptions)
-        console.log("tx hash of new trade: ", response.transactionHash)
+        const { calls } = await quoteToCalls({ quoteId: quote.quote.quoteId, takerAddress: account.address, slippage: quote.quote.estimatedSlippage || 0.005, executeApprove: true }, avnuOptions)
+        const estimate = await account.estimateInvokeFee(calls, { tip: TIP })
+        const maxTotalFee = BigNumber.from(getMaxTotalFee(estimate.resourceBounds, TIP).toString())
+        console.log(`estimated max total fee: ${maxTotalFee.toString()} FRI, our calculated fee was: ${quote.fees?.toString()}`)
+        if (MAX_GAS_FEES.gt(0) && maxTotalFee.gt(MAX_GAS_FEES)) {
+            console.warn(`skipping trade: fee ${maxTotalFee.toString()} exceeds the configured limit ${MAX_GAS_FEES.toString()}`)
+            return
+        }
+        if (quote.fees) {
+            const expectedFeeLimit = quote.fees.mul(BigNumber.from('1000').add(FEE_BUFFER_1000)).div(1000)
+            if (maxTotalFee.gt(expectedFeeLimit)) {
+                console.warn(`skipping trade: fee ${maxTotalFee.toString()} exceeds our calculated fee ${quote.fees.toString()} (+${FEE_BUFFER_1000}‰ buffer)`)
+                return
+            }
+        }
+
+        const response = await account.execute(calls, { tip: TIP, resourceBounds: estimate.resourceBounds })
+        console.log("tx hash of new trade: ", response.transaction_hash)
         let matchedBy: string | undefined = undefined
         if (quote.wasMatch && quote.matchedTx?.length) {
             matchedBy = quote.matchedTx[0]
         }
         await addTransaction(
             {
-                hash: response.transactionHash,
+                hash: response.transaction_hash,
                 sell: quote.sell,
                 matchedBy,
                 ...{ failedFeesIncluded: matchedBy && failedFees.gt(0) ? failedFees.toString() : undefined },
                 timestamp: Date.now(),
                 expectedFees: quote.fees?.toString(),
+                expectedMaxFees: maxTotalFee.toString(),
+                resourceBounds: serializeResourceBounds(estimate.resourceBounds),
                 expectedBuyAmount: quote.quote.buyAmount.toString(),
                 estimatedSlippage: quote.quote.estimatedSlippage,
                 expectedGasFees: quote.quote.gasFees.toString()

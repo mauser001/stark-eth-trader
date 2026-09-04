@@ -1,7 +1,7 @@
 import { AvnuOptions, Quote, QuoteRequest, getQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { MIN_GAS_FEES, TRADE_DIFFERENCE_1000 } from "./conts"
+import { MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_1000 } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
@@ -237,8 +237,10 @@ function getFees(sell: EthOrStrk, quote: Quote, ratio: BigNumber, maxTrackedFee?
     // quoted gas fees can be underestimated, so we never go below the highest fee actually paid recently (falls back to MIN_GAS_FEES)
     const floor = maxTrackedFee && maxTrackedFee.gt(MIN_GAS_FEES) ? maxTrackedFee : MIN_GAS_FEES
     const flooredFeesStrk = gasFeesStrk.gt(floor) ? gasFeesStrk : floor
-    const baseFee = sell === 'strk' ? applyRatio(ratio, flooredFeesStrk) : flooredFeesStrk
-    console.log(`baseFee: ${baseFee}, gasFeesStrk: ${gasFeesStrk}, floor: ${floor}, quote.estimatedSlippage: ${quote.estimatedSlippage}`)
+    // the priority tip is paid on top at execution time and isn't part of avnu's quoted gasFees
+    const totalFeesStrk = flooredFeesStrk.add(TIP_FEE_STRK)
+    const baseFee = sell === 'strk' ? applyRatio(ratio, totalFeesStrk) : totalFeesStrk
+    console.log(`baseFee: ${baseFee}, gasFeesStrk: ${gasFeesStrk}, floor: ${floor}, tipFeeStrk: ${TIP_FEE_STRK.toString()}, quote.estimatedSlippage: ${quote.estimatedSlippage}`)
     return baseFee
 }
 
