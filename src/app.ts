@@ -51,14 +51,13 @@ async function run() {
     }
     // ratio of the open tx we'd directly match, used only when we try to fill that exact tx
     const matchRatio = getRatio(strk, eth)
-    // the most demanding ratio seen across the latest + still open trades, used for regular (non matching) sells
-    // so a single small/noisy trade can't make the bar we compare against worse than it actually is
-    const recentTxs = [latest, ...unMatched]
+    // Prefer open trades for the ratio; only use the latest trade when no open trades exist.
+    const ratioTxs = unMatched.length ? unMatched : [latest]
 
     // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell a defined percentage
     const isEthMatch = !tx.matchedBy && tx.sell === 'eth'
     const sellStrk = isEthMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), SELL_PERCENT, MIN_SEL_AMOUNT_STRK)
-    const strkRatio = isEthMatch ? matchRatio : getBestRatio('strk', recentTxs) ?? matchRatio
+    const strkRatio = isEthMatch ? matchRatio : getBestRatio('strk', ratioTxs) ?? matchRatio
     let quote: QuoteData | undefined = undefined;
     if (sellStrk)
         quote = await getQuote('strk', sellStrk, account, avnuOptions, strkRatio, tx, unMatched, failedFees, maxFee)
@@ -68,7 +67,7 @@ async function run() {
         // if we don't find a good quote for strk we try to get eth for a good price
         const isStrkMatch = !tx.matchedBy && tx.sell === 'strk'
         const sellEth = isStrkMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), SELL_PERCENT, MIN_SEL_AMOUNT_ETH)
-        const ethRatio = isStrkMatch ? matchRatio : getBestRatio('eth', recentTxs) ?? matchRatio
+        const ethRatio = isStrkMatch ? matchRatio : getBestRatio('eth', ratioTxs) ?? matchRatio
         if (sellEth)
             quote = await getQuote('eth', sellEth, account, avnuOptions, ethRatio, tx, unMatched, failedFees, maxFee)
         else
