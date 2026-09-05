@@ -26,6 +26,22 @@ export function getMaxTotalFee(resourceBounds: ResourceBoundsBN, tip: bigint): b
         l2_gas.max_amount * (l2_gas.max_price_per_unit + tip)
 }
 
+// starknet.js pads every max_amount and max_price_per_unit of a fee estimate with a 50% overhead
+// (default config "resourceBoundsOverhead"), so the bounds describe the worst case, not the expected
+// fee: the max can be up to 1.5 * 1.5 = 2.25x the node's raw estimate. This recovers the realistic
+// fee (consumed * price + tip) by removing that overhead again.
+export function getEstimatedTotalFee(resourceBounds: ResourceBoundsBN, tip: bigint, overheadPercent: bigint = 50n): bigint {
+    const { l1_gas, l1_data_gas, l2_gas } = resourceBounds
+    const multiplier = 100n + overheadPercent
+    const divisor = multiplier * multiplier
+    const scaleDown = (amount: bigint, price: bigint) => amount * price * 10000n / divisor
+    const l2Consumed = l2_gas.max_amount * 100n / multiplier
+    return scaleDown(l1_gas.max_amount, l1_gas.max_price_per_unit) +
+        scaleDown(l1_data_gas.max_amount, l1_data_gas.max_price_per_unit) +
+        scaleDown(l2_gas.max_amount, l2_gas.max_price_per_unit) +
+        l2Consumed * tip
+}
+
 export function checkPromilleChange(origin: BigNumber, newValue: BigNumber, min: BigNumber) {
     const hundred = BigNumber.from(1000).add(min)
     const percent = newValue.mul(1000).div(origin)

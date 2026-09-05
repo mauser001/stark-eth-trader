@@ -48,7 +48,9 @@ export type QuoteData = {
     // fee estimate in the buy token, same value that gets deducted from the buy amount in checkQuote
     fees?: BigNumber,
     // the same fee estimate in strk
-    feesStrk?: BigNumber
+    feesStrk?: BigNumber,
+    // the maximum fee in strk with which this trade would still be profitable (break-even fee)
+    maxFeesStrk?: BigNumber
 }
 
 export type FailedTransactions = {

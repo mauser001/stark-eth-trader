@@ -7,8 +7,8 @@ import { getBestRatio, getQuote } from './quote';
 import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
 import { addTransaction, checkTransactions, getBlock, getFailedTransactions } from './transactions';
-import { getMaxTotalFee, getRatio, serializeResourceBounds } from './math';
-import { FEE_BUFFER_1000, MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TIP } from './conts';
+import { getEstimatedTotalFee, getMaxTotalFee, getRatio, serializeResourceBounds } from './math';
+import { MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TIP } from './conts';
 import { QuoteData } from './types';
 import { notifyRunSucceeded, restartEthernetAdapterIfNetworkIssue } from './ethernet';
 
@@ -80,17 +80,18 @@ async function run() {
         const { calls } = await quoteToCalls({ quoteId: quote.quote.quoteId, takerAddress: account.address, slippage: quote.quote.estimatedSlippage || 0.005, executeApprove: true }, avnuOptions)
         const estimate = await account.estimateInvokeFee(calls, { tip: TIP })
         const maxTotalFee = BigNumber.from(getMaxTotalFee(estimate.resourceBounds, TIP).toString())
-        console.log(`estimated max total fee: ${maxTotalFee.toString()} FRI, our calculated fee was: ${quote.fees?.toString()}`)
+        // the resource bounds are padded with a 50% overhead by starknet.js, so for the comparison
+        // against our calculated fee we use the realistic estimate with that overhead removed
+        const estimatedFee = BigNumber.from(getEstimatedTotalFee(estimate.resourceBounds, TIP).toString())
+        console.log(`estimated max total fee: ${maxTotalFee.toString()} FRI (realistic: ${estimatedFee.toString()} FRI), our calculated fee was: ${quote.feesStrk?.toString()}, max profitable fee: ${quote.maxFeesStrk?.toString()}`)
         if (MAX_GAS_FEES.gt(0) && maxTotalFee.gt(MAX_GAS_FEES)) {
             console.warn(`skipping trade: fee ${maxTotalFee.toString()} exceeds the configured limit ${MAX_GAS_FEES.toString()}`)
             return
         }
-        if (quote.fees) {
-            const expectedFeeLimit = quote.fees.mul(BigNumber.from('1000').add(FEE_BUFFER_1000)).div(1000)
-            if (maxTotalFee.gt(expectedFeeLimit)) {
-                console.warn(`skipping trade: fee ${maxTotalFee.toString()} exceeds our calculated fee ${quote.fees.toString()} (+${FEE_BUFFER_1000}‰ buffer)`)
-                return
-            }
+        // skip the trade if the fee we'd realistically pay would eat up the whole profit of the trade
+        if (quote.maxFeesStrk && estimatedFee.gt(quote.maxFeesStrk)) {
+            console.warn(`skipping trade: estimated fee ${estimatedFee.toString()} exceeds the max profitable fee ${quote.maxFeesStrk.toString()}`)
+            return
         }
 
         const response = await account.execute(calls, { tip: TIP, resourceBounds: estimate.resourceBounds })

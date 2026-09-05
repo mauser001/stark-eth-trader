@@ -118,9 +118,12 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
         }
         return
     }
+    // the minimum buy amount (including slippage) at which this trade is still profitable
+    let minBuyAmount: BigNumber | undefined
     // if there is an open tx where we sold eth then we compare the quote with it
     if (tx.sellAmount !== undefined && !tx.matchedBy && tx.sell !== sell) {
-        if (checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount, failedFees, tradeRatio, quote.estimatedSlippage)) {
+        minBuyAmount = checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount, failedFees, tradeRatio, quote.estimatedSlippage)
+        if (minBuyAmount) {
             doTrade = true
             wasMatch = true
         } else {
@@ -131,20 +134,27 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
         }
         // If not we compare the ratios 
     } else {
-        if (fixedBuyAmount && checkNextTradeDifference(sell, fixedBuyAmount, ratio, tradeRatio, quote.estimatedSlippage)) {
+        minBuyAmount = fixedBuyAmount ? checkNextTradeDifference(sell, fixedBuyAmount, ratio, tradeRatio, quote.estimatedSlippage) : undefined
+        if (minBuyAmount) {
             doTrade = true
         } else {
             console.log(`no selling ${sell} as trade is not good enough with fixed trade amount: ${fixedBuyAmount.toString()}`)
         }
     }
-    if (doTrade) {
+    if (doTrade && minBuyAmount) {
+        // the maximum fee (in the buy token) with which this trade would still be profitable
+        const maxFees = buyAmount.sub(minBuyAmount)
+        // convert to strk the same way fees were converted into the buy token above
+        const maxFeesStrk = sell === 'strk' ? applyRatio(ratio, undefined, maxFees) : maxFees
+        console.log(`maxFeesStrk: ${maxFeesStrk.toString()}, maxFees (buy token): ${maxFees.toString()}`)
         return {
             quote,
             ratio: tradeRatio,
             wasMatch,
             sell,
             fees,
-            feesStrk
+            feesStrk,
+            maxFeesStrk
         }
     }
 }
@@ -194,7 +204,8 @@ function addPercentPoint(amount: BigNumber, percent: BigNumber): BigNumber {
     return amount.mul(oneThousand.add(percent)).div(oneThousand)
 }
 
-function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber, failedFees: BigNumber, ratio: BigNumber, slippage = 0.005) {
+// returns the minimum buy amount (including slippage) that keeps this trade profitable, or undefined if the trade isn't good
+function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber, failedFees: BigNumber, ratio: BigNumber, slippage = 0.005): BigNumber | undefined {
     const ajustedFailedFees = sell === 'eth' || failedFees.eq(BigNumber.from('0')) ? failedFees : applyRatio(ratio, failedFees, undefined)
     const totalTarget = addPercentPoint(targetAmount, TRADE_DIFFERENCE_1000).add(ajustedFailedFees)
     let isGood = totalTarget.lt(tradeAmount)
@@ -204,9 +215,10 @@ function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigN
         const withSlippage = addSlippage(totalTarget, slippage)
         isGood = withSlippage.lt(tradeAmount)
         console.log(`checkTxGain isGood: ${isGood} after slippage: ${slippage}, target with Slippage: ${withSlippage.toString()}`)
+        if (isGood) {
+            return withSlippage
+        }
     }
-
-    return isGood
 }
 
 function addSlippage(amount: BigNumber, slippage = 0.01) {
@@ -216,7 +228,8 @@ function addSlippage(amount: BigNumber, slippage = 0.01) {
     return amount.add(toAdd);
 }
 
-function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRatio: BigNumber, newRatio: BigNumber, slippage = 0.005) {
+// returns the minimum buy amount (including slippage) that keeps this trade profitable, or undefined if the trade isn't good
+function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRatio: BigNumber, newRatio: BigNumber, slippage = 0.005): BigNumber | undefined {
     let withOldRatio: BigNumber
     if (sell === 'eth') {
         withOldRatio = tradeAmount.mul(oldRatio).div(newRatio)
@@ -231,9 +244,10 @@ function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRa
         const withSlippage = addSlippage(totalTarget, slippage)
         isGood = withSlippage.lt(tradeAmount)
         console.log(`checkNextTradeDifference isGood: ${isGood} after slippage: ${slippage}, target with Slippage: ${withSlippage.toString()}`)
+        if (isGood) {
+            return withSlippage
+        }
     }
-
-    return isGood
 }
 
 // fee estimate in strk; avnu quotes the gas part in strk, then we apply our floor and add the tip on top
