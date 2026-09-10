@@ -3,6 +3,7 @@ import { getTransactionData } from "./transactions";
 import { BigNumber } from "@ethersproject/bignumber";
 import { RATIO_MULTI, TIP } from "./conts";
 import { applyRatio, getRatio } from "./math";
+import { getTxRatio } from "./quote";
 import { StoredResourceBound, StoredResourceBounds, TxData } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -222,6 +223,26 @@ function reportMatched(transactions: ReportTransaction[]) {
 }
 
 // ---------------------------------------------------------------------------
+// report: unmatched (latest open trades, same ratio calc used when picking a trade to fill)
+// ---------------------------------------------------------------------------
+
+function reportUnmatched(transactions: ReportTransaction[]) {
+    console.log('-----------------------Latest unmatched trades------------------------');
+    const unmatched = transactions.filter(t => !t.matchedBy)
+    const latest = unmatched.slice(-10)
+    if (!latest.length) {
+        console.log('no unmatched trades')
+        return
+    }
+    for (const t of latest) {
+        const sell = t.isSellingEth ? 'eth' : 'strk'
+        const ratio = getTxRatio(sell, t.sellAmount, t.buyAmount)
+        console.log(`${t.date.toDateString()} ${t.hash} sell ${sell} | sell: ${formatBig(t.sellAmount)} | buy: ${formatBig(t.buyAmount)} | ratio: ${ratio.toNumber() / RATIO_MULTI}`)
+    }
+    console.log(`${unmatched.length} unmatched trade(s) total, showing latest ${latest.length}`)
+}
+
+// ---------------------------------------------------------------------------
 // report: backwards (balance changes walking back from the latest trade)
 // ---------------------------------------------------------------------------
 
@@ -369,6 +390,7 @@ const reports: Record<string, Report> = {
     overview: { description: 'balances and gain/loss in eth terms', run: (t) => reportOverview(t) },
     open: { description: 'open trades (ratios of unmatched eth sells) and trade counts', run: (t) => reportOpen(t) },
     matched: { description: 'matched trade groups and sold vs bought comparison', run: (t) => reportMatched(t) },
+    unmatched: { description: 'latest 10 unmatched trades with amounts and ratios', run: (t) => reportUnmatched(t) },
     backwards: { description: 'balance changes walking backwards from the latest trade', run: (t) => reportBackwards(t) },
     fees: { description: 'tx fee analytics: actual fees vs avnu/our/max estimates', run: (_t, raw) => reportFees(raw) },
 }
