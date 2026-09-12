@@ -2,7 +2,6 @@ import { formatEther } from "ethers";
 import { getTransactionData } from "./transactions";
 import { BigNumber } from "@ethersproject/bignumber";
 import { RATIO_MULTI, TIP } from "./conts";
-import { applyRatio, getRatio } from "./math";
 import { getTxRatio } from "./quote";
 import { StoredResourceBound, StoredResourceBounds, TxData } from "./types";
 
@@ -283,38 +282,27 @@ function reportBackwards(transactions: ReportTransaction[]) {
 
 // worst-case cost per resource, mirroring getMaxTotalFee (the tip only applies to l2 gas)
 function maxFeeBreakdown(bounds: StoredResourceBounds) {
-    if (!bounds.l1_gas || !bounds.l2_gas || !bounds.l1_data_gas) return undefined
     const tip = BigNumber.from(TIP.toString())
-    const cost = (bound: StoredResourceBound, extraPricePerUnit: BigNumber = BigNumber.from(0)) =>
-        BigNumber.from(bound.max_amount).mul(BigNumber.from(bound.max_price_per_unit).add(extraPricePerUnit))
+    const cost = (bound?: StoredResourceBound, extraPricePerUnit: BigNumber = BigNumber.from(0)) =>
+        bound ? BigNumber.from(bound.max_amount).mul(BigNumber.from(bound.max_price_per_unit).add(extraPricePerUnit)) : BigNumber.from(0)
     const l1 = cost(bounds.l1_gas)
     const l1Data = cost(bounds.l1_data_gas)
     const l2 = cost(bounds.l2_gas, tip)
     return { l1, l1Data, l2, total: l1.add(l1Data).add(l2) }
 }
 
-// our fee estimate in strk: stored directly for new trades, converted back from the buy-token
-// value (using the trade's own ratio) for old trades that only have expectedFees
 function expectedFeesInStrk(t: TxData): BigNumber | undefined {
-    if (t.expectedFeesStrk) return BigNumber.from(t.expectedFeesStrk)
-    if (!t.expectedFees) return undefined
-    const fees = BigNumber.from(t.expectedFees)
-    if (t.sell === 'eth') return fees
-    if (t.sell === 'strk' && t.sellAmount && t.buyAmount) {
-        const ratio = getRatio(BigNumber.from(t.sellAmount), BigNumber.from(t.buyAmount))
-        return applyRatio(ratio, undefined, fees)
-    }
-    return undefined
+    return t.expectedFeesStrk ? BigNumber.from(t.expectedFeesStrk) : undefined
 }
 
 function reportFees(rawTransactions: TxData[]) {
     console.log('-----------------------Tx fee analytics------------------------')
     const txs = rawTransactions
-        .filter(t => t.timestamp && t.actualFees)
+        .filter(t => t.timestamp && t.actualFees && expectedFeesInStrk(t))
         .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
     const skipped = rawTransactions.filter(t => t.timestamp).length - txs.length
     if (skipped > 0) {
-        console.log(`skipping ${skipped} trades without actualFees (still open or tracked before fee fields existed)`)
+        console.log(`skipping ${skipped} trades without actualFees or expectedFeesStrk`)
     }
     if (!txs.length) {
         console.log('no trades with actual fees yet')

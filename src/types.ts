@@ -25,13 +25,11 @@ export type TxData = {
     buyAmount?: string,
     balanceEth?: string,
     balanceStrk?: string,
-    expectedFees?: string,
-    // same fee estimate as expectedFees but always in strk, so trades can be compared regardless of direction
+    // fee estimate in strk, so trades can be compared regardless of direction
     expectedFeesStrk?: string,
     expectedMaxFees?: string,
     resourceBounds?: StoredResourceBounds,
     expectedBuyAmount?: string,
-    expectedGasFees?: string,
     estimatedSlippage?: number,
     timestamp?: number,
     block?: number,

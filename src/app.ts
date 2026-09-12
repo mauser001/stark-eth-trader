@@ -107,13 +107,11 @@ async function run() {
                 matchedBy,
                 ...{ failedFeesIncluded: matchedBy && failedFees.gt(0) ? failedFees.toString() : undefined },
                 timestamp: Date.now(),
-                expectedFees: quote.fees?.toString(),
                 expectedFeesStrk: quote.feesStrk?.toString(),
                 expectedMaxFees: maxTotalFee.toString(),
                 resourceBounds: serializeResourceBounds(estimate.resourceBounds),
                 expectedBuyAmount: quote.quote.buyAmount.toString(),
-                estimatedSlippage: quote.quote.estimatedSlippage,
-                expectedGasFees: quote.quote.gasFees.toString()
+                estimatedSlippage: quote.quote.estimatedSlippage
             },
             quote.matchedTx
         )

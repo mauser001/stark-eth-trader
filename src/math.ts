@@ -5,14 +5,17 @@ import { StoredResourceBound, StoredResourceBounds } from "./types";
 
 // converts bigint resource bounds to a JSON-serializable form so they can be stored with each trade
 export function serializeResourceBounds(resourceBounds: ResourceBoundsBN): StoredResourceBounds {
-    const toStored = (bound: { max_amount: bigint, max_price_per_unit: bigint }): StoredResourceBound => ({
-        max_amount: bound.max_amount.toString(),
-        max_price_per_unit: bound.max_price_per_unit.toString()
-    })
+    const toStored = (bound?: { max_amount: bigint, max_price_per_unit: bigint }): StoredResourceBound | undefined => {
+        if (!bound || BigInt(bound.max_amount.toString()) === 0n) return undefined
+        return {
+            max_amount: bound.max_amount.toString(),
+            max_price_per_unit: bound.max_price_per_unit.toString()
+        }
+    }
     return {
-        l1_gas: resourceBounds.l1_gas && toStored(resourceBounds.l1_gas),
-        l2_gas: resourceBounds.l2_gas && toStored(resourceBounds.l2_gas),
-        l1_data_gas: resourceBounds.l1_data_gas && toStored(resourceBounds.l1_data_gas)
+        l1_gas: toStored(resourceBounds.l1_gas),
+        l2_gas: toStored(resourceBounds.l2_gas),
+        l1_data_gas: toStored(resourceBounds.l1_data_gas)
     }
 }
 
