@@ -193,8 +193,10 @@ function reportMatched(transactions: ReportTransaction[]) {
                 continue
             }
             // Fees are paid in STRK; value them in ETH using this swap's executed price.
+            // When buying STRK, buyAmount already had the fee deducted, so add it back to get
+            // the real gross STRK amount that the executed rate was based on.
             const ethPerStrk = t.isSellingEth
-                ? t.sellAmount.mul(t.actualFees).div(t.buyAmount)
+                ? t.sellAmount.mul(t.actualFees).div(t.buyAmount.add(t.actualFees))
                 : t.actualFees.mul(t.buyAmount).div(t.sellAmount)
             feesEth = feesEth.add(ethPerStrk)
         }
