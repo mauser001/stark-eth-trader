@@ -16,6 +16,7 @@ interface ReportTransaction {
     buyAmount: BigNumber,
     sellAmount: BigNumber,
     actualFees?: BigNumber,
+    failedFeesIncluded?: BigNumber,
     balanceEth: BigNumber,
     balanceStrk: BigNumber,
     matchedBy?: string
@@ -50,6 +51,7 @@ function toReportTransactions(rawTransactions: TxData[]): ReportTransaction[] {
             buyAmount: BigNumber.from(t.buyAmount),
             sellAmount: BigNumber.from(t.sellAmount),
             actualFees: t.actualFees ? BigNumber.from(t.actualFees) : undefined,
+            failedFeesIncluded: t.failedFeesIncluded ? BigNumber.from(t.failedFeesIncluded) : undefined,
             balanceEth: BigNumber.from(t.balanceEth),
             balanceStrk: BigNumber.from(t.balanceStrk),
             matchedBy: t.matchedBy
@@ -174,52 +176,55 @@ function reportOpen(transactions: ReportTransaction[]) {
     console.log(`Tx Count-> Eth: ${count.ethSell} (matched: ${count.ethMatched}) | Strk: ${count.strkSell} (matched: ${count.strkMatched})`)
 }
 
+function feeInEth(trade: ReportTransaction, feeStrk: BigNumber): BigNumber {
+    if (feeStrk.isZero()) return BigNumber.from(0)
+    const actualFees = trade.actualFees ?? BigNumber.from(0)
+    return trade.isSellingEth
+        ? trade.sellAmount.mul(feeStrk).div(trade.buyAmount.add(actualFees))
+        : feeStrk.mul(trade.buyAmount).div(trade.sellAmount.sub(actualFees))
+}
+
 function reportMatched(transactions: ReportTransaction[]) {
     console.log('-----------------------Matched trades------------------------');
     const { groups } = getMatchGroups(transactions)
     let totalSoldEth = BigNumber.from(0)
     let totalBoughtEth = BigNumber.from(0)
-    let totalFeesEth = BigNumber.from(0)
-    let tradesWithoutFees = 0
+    let totalTxFeesEth = BigNumber.from(0)
+    let totalFailedFeesEth = BigNumber.from(0)
     for (const { hash, trades } of groups) {
         let soldEth = BigNumber.from(0)
         let boughtEth = BigNumber.from(0)
-        let feesEth = BigNumber.from(0)
+        let failedFeesEth = BigNumber.from(0)
         for (const t of trades) {
             if (t.isSellingEth) soldEth = soldEth.add(t.sellAmount)
             else boughtEth = boughtEth.add(t.buyAmount)
-            if (!t.actualFees) {
-                tradesWithoutFees++
-                continue
-            }
-            // Fees are paid in STRK; value them in ETH using this swap's executed price.
-            // When buying STRK, buyAmount already had the fee deducted, so add it back to get
-            // the real gross STRK amount that the executed rate was based on.
-            const ethPerStrk = t.isSellingEth
-                ? t.sellAmount.mul(t.actualFees).div(t.buyAmount.add(t.actualFees))
-                : t.actualFees.mul(t.buyAmount).div(t.sellAmount)
-            feesEth = feesEth.add(ethPerStrk)
+            failedFeesEth = failedFeesEth.add(feeInEth(t, t.failedFeesIncluded ?? BigNumber.from(0)))
         }
+        const closingTrade = trades[trades.length - 1]
+        const txFeesEth = closingTrade.isSellingEth
+            ? feeInEth(closingTrade, closingTrade.actualFees ?? BigNumber.from(0))
+            : trades.slice(0, -1).reduce((total, trade) =>
+                total.add(feeInEth(trade, trade.actualFees ?? BigNumber.from(0))), BigNumber.from(0))
         totalSoldEth = totalSoldEth.add(soldEth)
         totalBoughtEth = totalBoughtEth.add(boughtEth)
-        totalFeesEth = totalFeesEth.add(feesEth)
-        const netEth = boughtEth.sub(soldEth).sub(feesEth)
+        totalTxFeesEth = totalTxFeesEth.add(txFeesEth)
+        totalFailedFeesEth = totalFailedFeesEth.add(failedFeesEth)
+        const netEth = boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth)
         if (netEth.isNegative()) {
-            console.warn(`We lost ${formatBig(netEth.abs())} Eth after ${formatBig(feesEth)} Eth in tx fees, closing tx: ${hash}`)
+            console.warn(`We lost ${formatBig(netEth.abs())} Eth after ${formatBig(txFeesEth)} Eth in applicable tx fees and ${formatBig(failedFeesEth)} Eth in failed tx fees, closing tx: ${hash}`)
         } else {
-            console.log(`We made ${formatBig(netEth)} Eth after ${formatBig(feesEth)} Eth in tx fees, closing tx: ${hash}`)
+            console.log(`We made ${formatBig(netEth)} Eth after ${formatBig(txFeesEth)} Eth in applicable tx fees and ${formatBig(failedFeesEth)} Eth in failed tx fees, closing tx: ${hash}`)
         }
     }
     if (totalSoldEth.isZero() && totalBoughtEth.isZero()) {
         console.warn('No matched trades, cannot compare totals')
     } else {
-        const totalNetEth = totalBoughtEth.sub(totalSoldEth).sub(totalFeesEth)
+        const totalNetEth = totalBoughtEth.sub(totalSoldEth).sub(totalTxFeesEth).sub(totalFailedFeesEth)
         if (totalNetEth.isNegative()) {
-            console.warn(`In total we lost ${formatBig(totalNetEth.abs())} Eth after ${formatBig(totalFeesEth)} Eth in tx fees`)
+            console.warn(`In total we lost ${formatBig(totalNetEth.abs())} Eth after ${formatBig(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig(totalFailedFeesEth)} Eth in failed tx fees`)
         } else {
-            console.log(`In total we made ${formatBig(totalNetEth)} Eth after ${formatBig(totalFeesEth)} Eth in tx fees`)
+            console.log(`In total we made ${formatBig(totalNetEth)} Eth after ${formatBig(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig(totalFailedFeesEth)} Eth in failed tx fees`)
         }
-        if (tradesWithoutFees) console.warn(`${tradesWithoutFees} matched trade(s) lack actualFees and are excluded from the fee total`)
     }
 }
 
