@@ -170,7 +170,7 @@ function reportOpen(transactions: ReportTransaction[]) {
         }
         if (t.isSellingEth && !isMatched) {
             const ratio = t.buyAmount.mul(RATIO_MULTI).div(t.sellAmount)
-            console.log('Open eth sell - Ratio: ', ratio.toNumber() / RATIO_MULTI, t.date.toDateString(), 'Sell Eth: ', formatBig(t.sellAmount), ' Buy Strk: ', formatBig(t.buyAmount))
+            console.log(`${formatDayMonth(t.date)}: ratio: ${(ratio.toNumber() / RATIO_MULTI).toFixed(2)} ETH->STRK sell: ${formatBig8(t.sellAmount)} | buy: ${formatBig8(t.buyAmount)}`)
         }
     }
     console.log(`Tx Count-> Eth: ${count.ethSell} (matched: ${count.ethMatched}) | Strk: ${count.strkSell} (matched: ${count.strkMatched})`)
@@ -184,6 +184,49 @@ function feeInEth(trade: ReportTransaction, feeStrk: BigNumber): BigNumber {
         : feeStrk.mul(trade.buyAmount).div(trade.sellAmount.sub(actualFees))
 }
 
+// rounds to 8 decimal places using BigNumber math (avoids float precision loss)
+function formatBig8(value: BigNumber): string {
+    const isNeg = value.isNegative()
+    const unit = BigNumber.from(10).pow(10) // 18 - 8 decimals to drop
+    const rounded = value.abs().add(unit.div(2)).div(unit).mul(unit)
+    const full = formatEther((isNeg ? rounded.mul(-1) : rounded).toBigInt())
+    const [intPart, decPart = ''] = full.split('.')
+    return `${intPart}.${decPart.padEnd(8, '0').slice(0, 8)}`
+}
+
+function formatDayMonth(date: Date): string {
+    return `${date.getDate().toString().padStart(2, '0')}.${(date.getMonth() + 1).toString().padStart(2, '0')}`
+}
+
+function formatDayMonthYear(date: Date): string {
+    return `${formatDayMonth(date)}.${(date.getFullYear() % 100).toString().padStart(2, '0')}`
+}
+
+function groupDateLabel(trades: ReportTransaction[]): string {
+    const matchedTrades = trades.slice(0, -1) // exclude the closing tx from the count
+    const first = formatDayMonth(matchedTrades[0].date)
+    if (matchedTrades.length === 1) return `matched 1 tx from ${first}`
+    const last = formatDayMonth(matchedTrades[matchedTrades.length - 1].date)
+    return `matched ${matchedTrades.length} tx between ${first} - ${last}`
+}
+
+function computeMatchGroupTotals(trades: ReportTransaction[]): { soldEth: BigNumber, boughtEth: BigNumber, txFeesEth: BigNumber, failedFeesEth: BigNumber } {
+    let soldEth = BigNumber.from(0)
+    let boughtEth = BigNumber.from(0)
+    let failedFeesEth = BigNumber.from(0)
+    for (const t of trades) {
+        if (t.isSellingEth) soldEth = soldEth.add(t.sellAmount)
+        else boughtEth = boughtEth.add(t.buyAmount)
+        failedFeesEth = failedFeesEth.add(feeInEth(t, t.failedFeesIncluded ?? BigNumber.from(0)))
+    }
+    const closingTrade = trades[trades.length - 1]
+    const txFeesEth = closingTrade.isSellingEth
+        ? feeInEth(closingTrade, closingTrade.actualFees ?? BigNumber.from(0))
+        : trades.slice(0, -1).reduce((total, trade) =>
+            total.add(feeInEth(trade, trade.actualFees ?? BigNumber.from(0))), BigNumber.from(0))
+    return { soldEth, boughtEth, txFeesEth, failedFeesEth }
+}
+
 function reportMatched(transactions: ReportTransaction[]) {
     console.log('-----------------------Matched trades------------------------');
     const { groups } = getMatchGroups(transactions)
@@ -191,20 +234,42 @@ function reportMatched(transactions: ReportTransaction[]) {
     let totalBoughtEth = BigNumber.from(0)
     let totalTxFeesEth = BigNumber.from(0)
     let totalFailedFeesEth = BigNumber.from(0)
-    for (const { hash, trades } of groups) {
-        let soldEth = BigNumber.from(0)
-        let boughtEth = BigNumber.from(0)
-        let failedFeesEth = BigNumber.from(0)
-        for (const t of trades) {
-            if (t.isSellingEth) soldEth = soldEth.add(t.sellAmount)
-            else boughtEth = boughtEth.add(t.buyAmount)
-            failedFeesEth = failedFeesEth.add(feeInEth(t, t.failedFeesIncluded ?? BigNumber.from(0)))
+    for (const { trades } of groups) {
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades)
+        totalSoldEth = totalSoldEth.add(soldEth)
+        totalBoughtEth = totalBoughtEth.add(boughtEth)
+        totalTxFeesEth = totalTxFeesEth.add(txFeesEth)
+        totalFailedFeesEth = totalFailedFeesEth.add(failedFeesEth)
+        const netEth = boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth)
+        const closingDate = formatDayMonth(trades[trades.length - 1].date)
+        const label = groupDateLabel(trades)
+        if (netEth.isNegative()) {
+            console.warn(`${closingDate}: ${label}: We lost ${formatBig8(netEth.abs())} Eth`)
+        } else {
+            console.log(`${closingDate}: ${label}: We made ${formatBig8(netEth)} Eth`)
         }
-        const closingTrade = trades[trades.length - 1]
-        const txFeesEth = closingTrade.isSellingEth
-            ? feeInEth(closingTrade, closingTrade.actualFees ?? BigNumber.from(0))
-            : trades.slice(0, -1).reduce((total, trade) =>
-                total.add(feeInEth(trade, trade.actualFees ?? BigNumber.from(0))), BigNumber.from(0))
+    }
+    if (totalSoldEth.isZero() && totalBoughtEth.isZero()) {
+        console.warn('No matched trades, cannot compare totals')
+    } else {
+        const totalNetEth = totalBoughtEth.sub(totalSoldEth).sub(totalTxFeesEth).sub(totalFailedFeesEth)
+        if (totalNetEth.isNegative()) {
+            console.warn(`In total we lost ${formatBig8(totalNetEth.abs())} Eth after ${formatBig8(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig8(totalFailedFeesEth)} Eth in failed tx fees`)
+        } else {
+            console.log(`In total we made ${formatBig8(totalNetEth)} Eth after ${formatBig8(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig8(totalFailedFeesEth)} Eth in failed tx fees`)
+        }
+    }
+}
+
+function reportMatchedDetail(transactions: ReportTransaction[]) {
+    console.log('-----------------------Matched trades (detail)------------------------');
+    const { groups } = getMatchGroups(transactions)
+    let totalSoldEth = BigNumber.from(0)
+    let totalBoughtEth = BigNumber.from(0)
+    let totalTxFeesEth = BigNumber.from(0)
+    let totalFailedFeesEth = BigNumber.from(0)
+    for (const { hash, trades } of groups) {
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades)
         totalSoldEth = totalSoldEth.add(soldEth)
         totalBoughtEth = totalBoughtEth.add(boughtEth)
         totalTxFeesEth = totalTxFeesEth.add(txFeesEth)
@@ -243,7 +308,8 @@ function reportUnmatched(transactions: ReportTransaction[]) {
     for (const t of latest) {
         const sell = t.isSellingEth ? 'eth' : 'strk'
         const ratio = getTxRatio(sell, t.sellAmount, t.buyAmount)
-        console.log(`${t.date.toDateString()} ${t.hash} sell ${sell} | sell: ${formatBig(t.sellAmount)} | buy: ${formatBig(t.buyAmount)} | ratio: ${ratio.toNumber() / RATIO_MULTI}`)
+        const direction = t.isSellingEth ? 'ETH->STRK' : 'STRK->ETH'
+        console.log(`${formatDayMonth(t.date)}: ratio: ${(ratio.toNumber() / RATIO_MULTI).toFixed(2)} ${direction} sell: ${formatBig8(t.sellAmount)} | buy: ${formatBig8(t.buyAmount)}`)
     }
     console.log(`${unmatched.length} unmatched trade(s) total, showing latest ${latest.length}`)
 }
@@ -254,16 +320,14 @@ function reportUnmatched(transactions: ReportTransaction[]) {
 
 function haveBothChangedDirection(t: ReportTransaction, compare: ReportTransaction): ReportTransaction {
     if (t.balanceEth.gt(compare.balanceEth) && t.balanceStrk.gt(compare.balanceStrk)) {
-        printBalance('< Balances have decreased', t.balanceEth, t.balanceStrk, t.date);
         const diffEth = t.balanceEth.sub(compare.balanceEth)
         const diffStrk = t.balanceStrk.sub(compare.balanceStrk)
-        console.log(`---< We have less ${formatBig(diffEth)} Eth and ${formatBig(diffStrk)} Strk since then`)
+        console.log(`Down ${formatDayMonthYear(t.date)} Eth: ${formatBig8(diffEth)} Strk: ${formatBig8(diffStrk)}`)
         return t;
     } else if (t.balanceEth.lt(compare.balanceEth) && t.balanceStrk.lt(compare.balanceStrk)) {
-        printBalance('> Balances have increased', t.balanceEth, t.balanceStrk, t.date);
         const diffEth = compare.balanceEth.sub(t.balanceEth)
         const diffStrk = compare.balanceStrk.sub(t.balanceStrk)
-        console.log(`---> We have more ${formatBig(diffEth)} Eth and ${formatBig(diffStrk)} Strk since then`)
+        console.log(`Up ${formatDayMonthYear(t.date)} Eth: ${formatBig8(diffEth)} Strk: ${formatBig8(diffStrk)}`)
         return t;
     }
     return compare;
@@ -384,7 +448,8 @@ type Report = {
 const reports: Record<string, Report> = {
     overview: { description: 'balances and gain/loss in eth terms', run: (t) => reportOverview(t) },
     open: { description: 'open trades (ratios of unmatched eth sells) and trade counts', run: (t) => reportOpen(t) },
-    matched: { description: 'matched trade groups and sold vs bought comparison', run: (t) => reportMatched(t) },
+    matched: { description: 'matched trade groups and sold vs bought comparison (rounded, totals only)', run: (t) => reportMatched(t) },
+    'matched-detail': { description: 'matched trade groups with per-group fee breakdown and closing tx hash', run: (t) => reportMatchedDetail(t) },
     unmatched: { description: 'latest 10 unmatched trades with amounts and ratios', run: (t) => reportUnmatched(t) },
     backwards: { description: 'balance changes walking backwards from the latest trade', run: (t) => reportBackwards(t) },
     fees: { description: 'tx fee analytics: actual fees vs avnu/our/max estimates', run: (_t, raw) => reportFees(raw) },
