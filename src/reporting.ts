@@ -1,9 +1,9 @@
 import { formatEther } from "ethers";
 import { getTransactionData } from "./transactions";
 import { BigNumber } from "@ethersproject/bignumber";
-import { RATIO_MULTI, TIP } from "./conts";
+import { RATIO_MULTI } from "./conts";
 import { getTxRatio } from "./quote";
-import { StoredResourceBound, StoredResourceBounds, TxData } from "./types";
+import { TxData } from "./types";
 
 // ---------------------------------------------------------------------------
 // shared helpers
@@ -351,17 +351,6 @@ function reportBackwards(transactions: ReportTransaction[]) {
 // report: fees (actual tx fees vs. the estimates we traded with)
 // ---------------------------------------------------------------------------
 
-// worst-case cost per resource, mirroring getMaxTotalFee (the tip only applies to l2 gas)
-function maxFeeBreakdown(bounds: StoredResourceBounds) {
-    const tip = BigNumber.from(TIP.toString())
-    const cost = (bound?: StoredResourceBound, extraPricePerUnit: BigNumber = BigNumber.from(0)) =>
-        bound ? BigNumber.from(bound.max_amount).mul(BigNumber.from(bound.max_price_per_unit).add(extraPricePerUnit)) : BigNumber.from(0)
-    const l1 = cost(bounds.l1_gas)
-    const l1Data = cost(bounds.l1_data_gas)
-    const l2 = cost(bounds.l2_gas, tip)
-    return { l1, l1Data, l2, total: l1.add(l1Data).add(l2) }
-}
-
 function expectedFeesInStrk(t: TxData): BigNumber | undefined {
     return t.expectedFeesStrk ? BigNumber.from(t.expectedFeesStrk) : undefined
 }
@@ -384,11 +373,7 @@ function reportFees(rawTransactions: TxData[]) {
     let nOurs = 0, nMax = 0
     let sumRatioOurs = BigNumber.from(0), sumRatioMax = BigNumber.from(0)
     let maxRatioMax = BigNumber.from(0)
-    let worstRatioMaxTx = ''
     let overOurs = 0, overMax = 0
-    let sumOver = BigNumber.from(0), sumUnder = BigNumber.from(0), sumAbsDiff = BigNumber.from(0)
-    let nBounds = 0
-    let sumL1 = BigNumber.from(0), sumL1Data = BigNumber.from(0), sumL2 = BigNumber.from(0), sumTotal = BigNumber.from(0)
 
     const recentFrom = txs.length - 10
     txs.forEach((t, i) => {
@@ -401,39 +386,24 @@ function reportFees(rawTransactions: TxData[]) {
         const ratioMax = ratioPermille(actual, max)
         if (ratioOurs) {
             nOurs++; sumRatioOurs = sumRatioOurs.add(ratioOurs)
-            const diff = ours!.sub(actual)
-            sumAbsDiff = sumAbsDiff.add(diff.abs())
-            if (diff.gte(0)) sumOver = sumOver.add(diff)
-            else { sumUnder = sumUnder.add(diff.abs()); overOurs++ }
+            if (actual.gt(ours!)) overOurs++
         }
         if (ratioMax) {
             nMax++; sumRatioMax = sumRatioMax.add(ratioMax)
             if (actual.gt(max!)) overMax++
-            if (ratioMax.gt(maxRatioMax)) { maxRatioMax = ratioMax; worstRatioMaxTx = t.hash }
-        }
-        const breakdown = t.resourceBounds && maxFeeBreakdown(t.resourceBounds)
-        if (breakdown && !breakdown.total.isZero()) {
-            nBounds++
-            sumL1 = sumL1.add(breakdown.l1.mul(1000).div(breakdown.total))
-            sumL1Data = sumL1Data.add(breakdown.l1Data.mul(1000).div(breakdown.total))
-            sumL2 = sumL2.add(breakdown.l2.mul(1000).div(breakdown.total))
-            sumTotal = sumTotal.add(breakdown.total)
+            if (ratioMax.gt(maxRatioMax)) maxRatioMax = ratioMax
         }
 
         // only print the most recent trades plus the ones where an estimate was exceeded
         if (i >= recentFrom || (ours && actual.gt(ours)) || (max && actual.gt(max))) {
-            const date = new Date(t.timestamp ?? 0).toISOString().slice(0, 16).replace('T', ' ')
-            console.log(`${date} ${t.hash.slice(0, 12)}... sell ${t.sell ?? '?'} | actual: ${formatBig(actual)} | ours: ${ours ? formatBig(ours) : '-'} (${formatPercent(ratioOurs)}) | max: ${max ? formatBig(max) : '-'} (${formatPercent(ratioMax)})`)
+            const date = formatDayMonth(new Date(t.timestamp ?? 0))
+            console.log(`${date}: sell ${t.sell ?? '?'} | actual: ${formatBig8(actual)} | ours: ${ours ? formatBig8(ours) : '-'} (${formatPercent(ratioOurs)}) | max: ${max ? formatBig8(max) : '-'} (${formatPercent(ratioMax)})`)
         }
     })
 
-    console.log(`trades with actual fees: ${txs.length}, total fees paid: ${formatBig(sumActual)} STRK, avg: ${formatBig(sumActual.div(txs.length))} STRK`)
+    console.log(`trades with actual fees: ${txs.length}, total fees paid: ${formatBig8(sumActual)} STRK, avg: ${formatBig8(sumActual.div(txs.length))} STRK`)
     if (nOurs) console.log(`actual vs our expectedFee: avg ${formatPercent(sumRatioOurs.div(nOurs))} | actual was higher in ${overOurs}/${nOurs} trades`)
-    if (nOurs) console.log(`absolute diff: we estimated ${formatBig(sumOver)} STRK too much and ${formatBig(sumUnder)} STRK too little, net ${formatBig(sumOver.sub(sumUnder))} overestimated | avg abs diff ${formatBig(sumAbsDiff.div(nOurs))} STRK per trade`)
-    if (nMax) console.log(`actual vs expectedMaxFee:  avg ${formatPercent(sumRatioMax.div(nMax))} | worst ${formatPercent(maxRatioMax)} (${worstRatioMaxTx.slice(0, 12)}...) | over max: ${overMax} (should always be 0)`)
-    if (nBounds) {
-        console.log(`avg max fee split over ${nBounds} trades: l1 gas ${formatPercent(sumL1.div(nBounds))} | l1 data gas ${formatPercent(sumL1Data.div(nBounds))} | l2 gas incl. tip ${formatPercent(sumL2.div(nBounds))} | avg max fee ${formatBig(sumTotal.div(nBounds))} STRK`)
-    }
+    if (nMax) console.log(`actual vs expectedMaxFee: avg ${formatPercent(sumRatioMax.div(nMax))} | worst ${formatPercent(maxRatioMax)} | over max: ${overMax} (should always be 0)`)
 }
 
 // ---------------------------------------------------------------------------
