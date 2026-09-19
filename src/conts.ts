@@ -15,3 +15,5 @@ export const TIP_FEE_STRK = BigNumber.from(TIP.toString()).mul(EST_L2_GAS)
 export const MAX_GAS_FEES = BigNumber.from(process.env.MAX_GAS_FEES || '0')
 // allowed overshoot (per mille) of the actual tx fee above the fee we calculated the trade with
 export const FEE_BUFFER_1000 = BigNumber.from(process.env.FEE_BUFFER_1000 || '50')
+// target ETH balance; once the latest transaction's ETH balance reaches or exceeds this, the process stops trading. 0 disables the check
+export const TARGET_ETH_BALANCE = BigNumber.from(process.env.TARGET_ETH_BALANCE || '0')

@@ -8,7 +8,7 @@ import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
 import { addTransaction, checkTransactions, getBlock, getFailedTransactions } from './transactions';
 import { getEstimatedTotalFee, getMaxTotalFee, getRatio, serializeResourceBounds } from './math';
-import { MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TIP } from './conts';
+import { MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TARGET_ETH_BALANCE, TIP } from './conts';
 import { QuoteData } from './types';
 import { notifyRunSucceeded, restartEthernetAdapterIfNetworkIssue } from './ethernet';
 
@@ -34,6 +34,10 @@ async function run() {
             console.log('we need to wait for the next block after', latest.block)
             return
         }
+    }
+    if (TARGET_ETH_BALANCE.gt(0) && latest?.balanceEth && BigNumber.from(latest.balanceEth).gte(TARGET_ETH_BALANCE)) {
+        console.log(`ETH balance ${latest.balanceEth} reached the target ${TARGET_ETH_BALANCE.toString()}, stopping the process`)
+        process.exit(0)
     }
     const { currentFailedAmmount } = await getFailedTransactions()
     const failedFees = BigNumber.from(currentFailedAmmount)
