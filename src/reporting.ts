@@ -147,6 +147,8 @@ function getMatchGroups(transactions: ReportTransaction[]): { groups: { hash: st
         // the newest trade of the group is the one that closed it
         groups.push({ hash: trades[trades.length - 1].hash, trades })
     }
+    groups.sort((a, b) =>
+        a.trades[a.trades.length - 1].date.getTime() - b.trades[b.trades.length - 1].date.getTime())
     return { groups, matchedHashes }
 }
 
@@ -375,7 +377,7 @@ function reportFees(rawTransactions: TxData[]) {
     let maxRatioMax = BigNumber.from(0)
     let overOurs = 0, overMax = 0
 
-    const recentFrom = txs.length - 10
+    const recentFrom = txs.length - 20
     txs.forEach((t, i) => {
         const actual = BigNumber.from(t.actualFees)
         const ours = expectedFeesInStrk(t)
