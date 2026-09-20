@@ -9,6 +9,8 @@
     "prod": "npm run build && node --env-file=prod.env dist/app.js",
     "report-prod": "npm run build && node --env-file=prod.env dist/reporting.js",
     "extract-prod": "npm run build && node --env-file=prod.env dist/extractMatched.js",
+    "backfill-aggregate-prod": "npm run build && node --env-file=prod.env dist/backfillAggregate.js",
+    "add-transfer-prod": "npm run build && node --env-file=prod.env dist/addTransfer.js",
     "combine-prod": "npm run build && node --env-file=prod.env dist/combine.js",
     "sort-prod": "npm run build && node --env-file=prod.env dist/sortTrades.js"
   },

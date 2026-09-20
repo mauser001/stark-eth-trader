@@ -4,23 +4,13 @@ import { BigNumber } from "@ethersproject/bignumber";
 import { RATIO_MULTI } from "./conts";
 import { getTxRatio } from "./quote";
 import { TxData } from "./types";
+import { ReportTransaction, computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
+import { AggregateData, ExternalTransfer, getAggregateData } from "./aggregate";
+import { loadArchivedTransactions } from "./archives";
 
 // ---------------------------------------------------------------------------
 // shared helpers
 // ---------------------------------------------------------------------------
-
-interface ReportTransaction {
-    hash: string
-    date: Date
-    isSellingEth: boolean,
-    buyAmount: BigNumber,
-    sellAmount: BigNumber,
-    actualFees?: BigNumber,
-    failedFeesIncluded?: BigNumber,
-    balanceEth: BigNumber,
-    balanceStrk: BigNumber,
-    matchedBy?: string
-}
 
 function formatBig(value: BigNumber): string {
     return formatEther(value.toBigInt())
@@ -41,29 +31,24 @@ function formatPercent(permille?: BigNumber): string {
     return `${(permille.toNumber() / 10).toFixed(1)}%`
 }
 
-function toReportTransactions(rawTransactions: TxData[]): ReportTransaction[] {
-    return rawTransactions
-        .filter(t => t.timestamp && t.buyAmount && t.sellAmount && t.balanceEth && t.balanceStrk)
-        .map(t => ({
-            hash: t.hash,
-            date: new Date(t.timestamp ?? 0),
-            isSellingEth: t.sell === 'eth',
-            buyAmount: BigNumber.from(t.buyAmount),
-            sellAmount: BigNumber.from(t.sellAmount),
-            actualFees: t.actualFees ? BigNumber.from(t.actualFees) : undefined,
-            failedFeesIncluded: t.failedFeesIncluded ? BigNumber.from(t.failedFeesIncluded) : undefined,
-            balanceEth: BigNumber.from(t.balanceEth),
-            balanceStrk: BigNumber.from(t.balanceStrk),
-            matchedBy: t.matchedBy
-        }))
-        .sort((a, b) => a.date.getTime() - b.date.getTime())
-}
-
 // ---------------------------------------------------------------------------
 // report: overview (balances and gain/loss in eth terms)
 // ---------------------------------------------------------------------------
 
-function reportOverview(transactions: ReportTransaction[]) {
+// sum of manually recorded external eth/strk top-ups within [from, to], so they can be excluded
+// from the trading gain/loss calc below (they are deposits, not trading profit)
+function sumExternalTransfers(transfers: ExternalTransfer[], from: number, to: number): { eth: BigNumber, strk: BigNumber } {
+    let eth = BigNumber.from(0)
+    let strk = BigNumber.from(0)
+    for (const t of transfers) {
+        if (t.timestamp < from || t.timestamp > to) continue
+        if (t.ethAmount) eth = eth.add(t.ethAmount)
+        if (t.strkAmount) strk = strk.add(t.strkAmount)
+    }
+    return { eth, strk }
+}
+
+function reportOverview(transactions: ReportTransaction[], aggregate: AggregateData) {
     console.log('-----------------------Overview------------------------');
     const firstMatchedTradeIndex = transactions.findIndex(({ matchedBy }, i) => i > 0 && !!matchedBy)
     if (firstMatchedTradeIndex < 0) {
@@ -76,10 +61,17 @@ function reportOverview(transactions: ReportTransaction[]) {
     const lastTrade = transactions[transactions.length - 1]
     printBalance('Last Balance', lastTrade.balanceEth, lastTrade.balanceStrk, lastTrade.date)
 
+    const { eth: transferredEth, strk: transferredStrk } = sumExternalTransfers(
+        aggregate.externalTransfers, firstTrade.date.getTime(), lastTrade.date.getTime())
+    if (transferredEth.gt(0) || transferredStrk.gt(0)) {
+        console.log(`Excluding known external transfers in this range: ${formatBig(transferredEth)} Eth, ${formatBig(transferredStrk)} Strk`)
+    }
+
     const firstBalanceEth = firstTrade.balanceEth
     const firstBalanceStrk = firstTrade.balanceStrk
-    const lastBalanceEth = lastTrade.balanceEth
-    const lastBalanceStrk = lastTrade.balanceStrk
+    // deposits inflate the last balance, so subtract them before comparing to the initial balance
+    const lastBalanceEth = lastTrade.balanceEth.sub(transferredEth)
+    const lastBalanceStrk = lastTrade.balanceStrk.sub(transferredStrk)
 
     if (firstBalanceEth.lt(lastBalanceEth)) {
         console.log(`We have more ${formatBig(lastBalanceEth.sub(firstBalanceEth))} Eth on matched trades`)
@@ -106,52 +98,6 @@ function reportOverview(transactions: ReportTransaction[]) {
 // reports: open (open trades + counts) and matched (matched groups + totals)
 // ---------------------------------------------------------------------------
 
-// matchedBy links trades in both directions (closed trades point to the closing trade and the
-// closing trade points back to the first trade it matched), so we build the match groups with
-// union-find - otherwise every group would be counted once per direction
-function getMatchGroups(transactions: ReportTransaction[]): { groups: { hash: string, trades: ReportTransaction[] }[], matchedHashes: Set<string> } {
-    const byHash = new Map(transactions.map(t => [t.hash, t]))
-    const parent = new Map<string, string>()
-    const findRoot = (hash: string): string => {
-        let root = hash
-        while (parent.get(root) !== root) root = parent.get(root)!
-        let cur = hash
-        while (parent.get(cur) !== cur) {
-            const next = parent.get(cur)!
-            parent.set(cur, root)
-            cur = next
-        }
-        return root
-    }
-    const union = (a: string, b: string) => {
-        if (!parent.has(a)) parent.set(a, a)
-        if (!parent.has(b)) parent.set(b, b)
-        parent.set(findRoot(a), findRoot(b))
-    }
-    for (const t of transactions) {
-        if (t.matchedBy && t.matchedBy !== 'initial' && byHash.has(t.matchedBy)) union(t.hash, t.matchedBy)
-    }
-    const groupsByRoot = new Map<string, ReportTransaction[]>()
-    for (const t of transactions) {
-        if (!parent.has(t.hash)) continue
-        const root = findRoot(t.hash)
-        const group = groupsByRoot.get(root) ?? []
-        group.push(t)
-        groupsByRoot.set(root, group)
-    }
-    const matchedHashes = new Set<string>()
-    const groups: { hash: string, trades: ReportTransaction[] }[] = []
-    for (const trades of groupsByRoot.values()) {
-        if (trades.length < 2) continue
-        trades.forEach(t => matchedHashes.add(t.hash))
-        // the newest trade of the group is the one that closed it
-        groups.push({ hash: trades[trades.length - 1].hash, trades })
-    }
-    groups.sort((a, b) =>
-        a.trades[a.trades.length - 1].date.getTime() - b.trades[b.trades.length - 1].date.getTime())
-    return { groups, matchedHashes }
-}
-
 function reportOpen(transactions: ReportTransaction[]) {
     console.log('-----------------------Open trades------------------------');
     const { matchedHashes } = getMatchGroups(transactions)
@@ -176,14 +122,6 @@ function reportOpen(transactions: ReportTransaction[]) {
         }
     }
     console.log(`Tx Count-> Eth: ${count.ethSell} (matched: ${count.ethMatched}) | Strk: ${count.strkSell} (matched: ${count.strkMatched})`)
-}
-
-function feeInEth(trade: ReportTransaction, feeStrk: BigNumber): BigNumber {
-    if (feeStrk.isZero()) return BigNumber.from(0)
-    const actualFees = trade.actualFees ?? BigNumber.from(0)
-    return trade.isSellingEth
-        ? trade.sellAmount.mul(feeStrk).div(trade.buyAmount.add(actualFees))
-        : feeStrk.mul(trade.buyAmount).div(trade.sellAmount.sub(actualFees))
 }
 
 // rounds to 8 decimal places using BigNumber math (avoids float precision loss)
@@ -212,39 +150,60 @@ function groupDateLabel(trades: ReportTransaction[]): string {
     return `matched ${matchedTrades.length} tx between ${first} - ${last}`
 }
 
-function computeMatchGroupTotals(trades: ReportTransaction[]): { soldEth: BigNumber, boughtEth: BigNumber, txFeesEth: BigNumber, failedFeesEth: BigNumber } {
+// totals of matched groups already archived by extractMatched (their opener trades no longer
+// exist in the live trade file, so they can only be recovered from the aggregate data)
+function archivedTotals(aggregate: AggregateData): { soldEth: BigNumber, boughtEth: BigNumber, txFeesEth: BigNumber, failedFeesEth: BigNumber, groupCount: number } {
     let soldEth = BigNumber.from(0)
     let boughtEth = BigNumber.from(0)
+    let txFeesEth = BigNumber.from(0)
     let failedFeesEth = BigNumber.from(0)
-    for (const t of trades) {
-        if (t.isSellingEth) soldEth = soldEth.add(t.sellAmount)
-        else boughtEth = boughtEth.add(t.buyAmount)
-        failedFeesEth = failedFeesEth.add(feeInEth(t, t.failedFeesIncluded ?? BigNumber.from(0)))
+    for (const g of aggregate.matchedGroups) {
+        soldEth = soldEth.add(g.soldEth)
+        boughtEth = boughtEth.add(g.boughtEth)
+        txFeesEth = txFeesEth.add(g.txFeesEth)
+        failedFeesEth = failedFeesEth.add(g.failedFeesEth)
     }
-    const closingTrade = trades[trades.length - 1]
-    const txFeesEth = closingTrade.isSellingEth
-        ? feeInEth(closingTrade, closingTrade.actualFees ?? BigNumber.from(0))
-        : trades.slice(0, -1).reduce((total, trade) =>
-            total.add(feeInEth(trade, trade.actualFees ?? BigNumber.from(0))), BigNumber.from(0))
-    return { soldEth, boughtEth, txFeesEth, failedFeesEth }
+    return { soldEth, boughtEth, txFeesEth, failedFeesEth, groupCount: aggregate.matchedGroups.length }
 }
 
-function reportMatched(transactions: ReportTransaction[]) {
+function reportMatched(transactions: ReportTransaction[], aggregate: AggregateData) {
     console.log('-----------------------Matched trades------------------------');
     const { groups } = getMatchGroups(transactions)
-    let totalSoldEth = BigNumber.from(0)
-    let totalBoughtEth = BigNumber.from(0)
-    let totalTxFeesEth = BigNumber.from(0)
-    let totalFailedFeesEth = BigNumber.from(0)
+    const archived = archivedTotals(aggregate)
+    const fallbackFeeStrk = getAverageActualFeesStrk(transactions)
+    let totalSoldEth = archived.soldEth
+    let totalBoughtEth = archived.boughtEth
+    let totalTxFeesEth = archived.txFeesEth
+    let totalFailedFeesEth = archived.failedFeesEth
+    if (archived.groupCount) {
+        console.log(`(including ${archived.groupCount} archived group(s) from previous extractMatched runs)`)
+    }
+
+    // always show every group still in the live file, but keep at least MIN_ENTRIES visible by
+    // filling up with the most recent archived groups when extractMatched removed too many
+    const MIN_ENTRIES = 20
+    const missing = Math.max(0, MIN_ENTRIES - groups.length)
+    const filledFromArchive = [...aggregate.matchedGroups]
+        .sort((a, b) => b.toTimestamp - a.toTimestamp)
+        .slice(0, missing)
+    const displayEntries: { date: Date, label: string, netEth: BigNumber }[] = filledFromArchive.map(g => ({
+        date: new Date(g.toTimestamp),
+        label: `matched ${g.tradeCount - 1} tx (archived)`,
+        netEth: BigNumber.from(g.boughtEth).sub(g.soldEth).sub(g.txFeesEth).sub(g.failedFeesEth)
+    }))
+
     for (const { trades } of groups) {
-        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades)
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades, fallbackFeeStrk)
         totalSoldEth = totalSoldEth.add(soldEth)
         totalBoughtEth = totalBoughtEth.add(boughtEth)
         totalTxFeesEth = totalTxFeesEth.add(txFeesEth)
         totalFailedFeesEth = totalFailedFeesEth.add(failedFeesEth)
         const netEth = boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth)
-        const closingDate = formatDayMonth(trades[trades.length - 1].date)
-        const label = groupDateLabel(trades)
+        displayEntries.push({ date: trades[trades.length - 1].date, label: groupDateLabel(trades), netEth })
+    }
+
+    for (const { date, label, netEth } of displayEntries.sort((a, b) => a.date.getTime() - b.date.getTime())) {
+        const closingDate = formatDayMonth(date)
         if (netEth.isNegative()) {
             console.warn(`${closingDate}: ${label}: We lost ${formatBig8(netEth.abs())} Eth`)
         } else {
@@ -263,24 +222,29 @@ function reportMatched(transactions: ReportTransaction[]) {
     }
 }
 
-function reportMatchedDetail(transactions: ReportTransaction[]) {
+function reportMatchedDetail(transactions: ReportTransaction[], aggregate: AggregateData) {
     console.log('-----------------------Matched trades (detail)------------------------');
     const { groups } = getMatchGroups(transactions)
-    let totalSoldEth = BigNumber.from(0)
-    let totalBoughtEth = BigNumber.from(0)
-    let totalTxFeesEth = BigNumber.from(0)
-    let totalFailedFeesEth = BigNumber.from(0)
+    const archived = archivedTotals(aggregate)
+    const fallbackFeeStrk = getAverageActualFeesStrk(transactions)
+    let totalSoldEth = archived.soldEth
+    let totalBoughtEth = archived.boughtEth
+    let totalTxFeesEth = archived.txFeesEth
+    let totalFailedFeesEth = archived.failedFeesEth
+    if (archived.groupCount) {
+        console.log(`(including ${archived.groupCount} archived group(s) from previous extractMatched runs, totals only)`)
+    }
     for (const { hash, trades } of groups) {
-        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades)
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades, fallbackFeeStrk)
         totalSoldEth = totalSoldEth.add(soldEth)
         totalBoughtEth = totalBoughtEth.add(boughtEth)
         totalTxFeesEth = totalTxFeesEth.add(txFeesEth)
         totalFailedFeesEth = totalFailedFeesEth.add(failedFeesEth)
         const netEth = boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth)
         if (netEth.isNegative()) {
-            console.warn(`We lost ${formatBig(netEth.abs())} Eth after ${formatBig(txFeesEth)} Eth in applicable tx fees and ${formatBig(failedFeesEth)} Eth in failed tx fees, closing tx: ${hash}`)
+            console.warn(`We lost ${formatBig8(netEth.abs())} Eth after ${formatBig8(txFeesEth)} Eth in applicable tx fees and ${formatBig8(failedFeesEth)} Eth in failed tx fees, closing tx: ${hash}`)
         } else {
-            console.log(`We made ${formatBig(netEth)} Eth after ${formatBig(txFeesEth)} Eth in applicable tx fees and ${formatBig(failedFeesEth)} Eth in failed tx fees, closing tx: ${hash}`)
+            console.log(`We made ${formatBig8(netEth)} Eth after ${formatBig8(txFeesEth)} Eth in applicable tx fees and ${formatBig8(failedFeesEth)} Eth in failed tx fees, closing tx: ${hash}`)
         }
     }
     if (totalSoldEth.isZero() && totalBoughtEth.isZero()) {
@@ -288,11 +252,75 @@ function reportMatchedDetail(transactions: ReportTransaction[]) {
     } else {
         const totalNetEth = totalBoughtEth.sub(totalSoldEth).sub(totalTxFeesEth).sub(totalFailedFeesEth)
         if (totalNetEth.isNegative()) {
-            console.warn(`In total we lost ${formatBig(totalNetEth.abs())} Eth after ${formatBig(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig(totalFailedFeesEth)} Eth in failed tx fees`)
+            console.warn(`In total we lost ${formatBig8(totalNetEth.abs())} Eth after ${formatBig8(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig8(totalFailedFeesEth)} Eth in failed tx fees`)
         } else {
-            console.log(`In total we made ${formatBig(totalNetEth)} Eth after ${formatBig(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig(totalFailedFeesEth)} Eth in failed tx fees`)
+            console.log(`In total we made ${formatBig8(totalNetEth)} Eth after ${formatBig8(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig8(totalFailedFeesEth)} Eth in failed tx fees`)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// reports: matched-daily / matched-monthly (net gain/loss grouped by closing date)
+// ---------------------------------------------------------------------------
+
+interface MatchedEntry {
+    date: Date
+    netEth: BigNumber
+    tradeCount: number
+}
+
+// combines still-archived groups with groups still present in the live file into one list of
+// closed positions, each with its closing date, net gain/loss and trade count
+function buildMatchedEntries(transactions: ReportTransaction[], aggregate: AggregateData, fallbackFeeStrk?: BigNumber): MatchedEntry[] {
+    const entries: MatchedEntry[] = aggregate.matchedGroups.map(g => ({
+        date: new Date(g.toTimestamp),
+        netEth: BigNumber.from(g.boughtEth).sub(g.soldEth).sub(g.txFeesEth).sub(g.failedFeesEth),
+        tradeCount: g.tradeCount
+    }))
+    const { groups } = getMatchGroups(transactions)
+    for (const { trades } of groups) {
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades, fallbackFeeStrk)
+        entries.push({
+            date: trades[trades.length - 1].date,
+            netEth: boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth),
+            tradeCount: trades.length
+        })
+    }
+    return entries.sort((a, b) => a.date.getTime() - b.date.getTime())
+}
+
+function formatMonthYear(date: Date): string {
+    return `${(date.getMonth() + 1).toString().padStart(2, '0')}.${(date.getFullYear() % 100).toString().padStart(2, '0')}`
+}
+
+function reportMatchedByPeriod(entries: MatchedEntry[], periodLabel: (date: Date) => string) {
+    const buckets = new Map<string, { date: Date, netEth: BigNumber, tradeCount: number }>()
+    for (const e of entries) {
+        const key = periodLabel(e.date)
+        const bucket = buckets.get(key) ?? { date: e.date, netEth: BigNumber.from(0), tradeCount: 0 }
+        bucket.netEth = bucket.netEth.add(e.netEth)
+        bucket.tradeCount += e.tradeCount
+        buckets.set(key, bucket)
+    }
+    for (const [label, b] of Array.from(buckets.entries()).sort((a, b) => a[1].date.getTime() - b[1].date.getTime())) {
+        if (b.netEth.isNegative()) {
+            console.warn(`${label} we lost ${formatBig8(b.netEth.abs())} ETH on ${b.tradeCount} trades`)
+        } else {
+            console.log(`${label} we made ${formatBig8(b.netEth)} ETH on ${b.tradeCount} trades`)
+        }
+    }
+}
+
+function reportMatchedDaily(transactions: ReportTransaction[], aggregate: AggregateData) {
+    console.log('-----------------------Matched trades per day------------------------');
+    const entries = buildMatchedEntries(transactions, aggregate, getAverageActualFeesStrk(transactions))
+    reportMatchedByPeriod(entries, formatDayMonthYear)
+}
+
+function reportMatchedMonthly(transactions: ReportTransaction[], aggregate: AggregateData) {
+    console.log('-----------------------Matched trades per month------------------------');
+    const entries = buildMatchedEntries(transactions, aggregate, getAverageActualFeesStrk(transactions))
+    reportMatchedByPeriod(entries, formatMonthYear)
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +375,16 @@ function reportBackwards(transactions: ReportTransaction[]) {
 
     console.log('Total change')
     haveBothChangedDirection(matched, latest)
+}
+
+// merges the archived (already-extracted) trades back in with the live ones and re-sorts by
+// timestamp, so the balance walk isn't cut short at the point of the last extractMatched run
+function buildBackwardsTransactions(rawTransactions: TxData[]): ReportTransaction[] {
+    const byHash = new Map(rawTransactions.map(t => [t.hash, t]))
+    for (const t of loadArchivedTransactions()) {
+        if (!byHash.has(t.hash)) byHash.set(t.hash, t)
+    }
+    return toReportTransactions(Array.from(byHash.values()))
 }
 
 // ---------------------------------------------------------------------------
@@ -414,16 +452,18 @@ function reportFees(rawTransactions: TxData[]) {
 
 type Report = {
     description: string,
-    run: (transactions: ReportTransaction[], rawTransactions: TxData[]) => void
+    run: (transactions: ReportTransaction[], rawTransactions: TxData[], aggregate: AggregateData) => void
 }
 
 const reports: Record<string, Report> = {
-    overview: { description: 'balances and gain/loss in eth terms', run: (t) => reportOverview(t) },
+    overview: { description: 'balances and gain/loss in eth terms', run: (t, _raw, agg) => reportOverview(t, agg) },
     open: { description: 'open trades (ratios of unmatched eth sells) and trade counts', run: (t) => reportOpen(t) },
-    matched: { description: 'matched trade groups and sold vs bought comparison (rounded, totals only)', run: (t) => reportMatched(t) },
-    'matched-detail': { description: 'matched trade groups with per-group fee breakdown and closing tx hash', run: (t) => reportMatchedDetail(t) },
+    matched: { description: 'matched trade groups and sold vs bought comparison (rounded, totals only)', run: (t, _raw, agg) => reportMatched(t, agg) },
+    'matched-detail': { description: 'matched trade groups with per-group fee breakdown and closing tx hash', run: (t, _raw, agg) => reportMatchedDetail(t, agg) },
+    'matched-daily': { description: 'net gain/loss and trade count grouped by closing day (includes archived groups)', run: (t, _raw, agg) => reportMatchedDaily(t, agg) },
+    'matched-monthly': { description: 'net gain/loss and trade count grouped by closing month (includes archived groups)', run: (t, _raw, agg) => reportMatchedMonthly(t, agg) },
     unmatched: { description: 'latest 10 unmatched trades with amounts and ratios', run: (t) => reportUnmatched(t) },
-    backwards: { description: 'balance changes walking backwards from the latest trade', run: (t) => reportBackwards(t) },
+    backwards: { description: 'balance changes walking backwards from the latest trade (includes archived trades)', run: (_t, raw) => reportBackwards(buildBackwardsTransactions(raw)) },
     fees: { description: 'tx fee analytics: actual fees vs avnu/our/max estimates', run: (_t, raw) => reportFees(raw) },
 }
 
@@ -439,10 +479,11 @@ async function analyseTrades() {
         console.log('not enough completed transactions')
         return
     }
+    const aggregate = await getAggregateData()
 
     if (reportName === 'all') {
         for (const name of Object.keys(reports)) {
-            reports[name].run(transactions, rawTransactions)
+            reports[name].run(transactions, rawTransactions, aggregate)
         }
         return
     }
@@ -455,7 +496,7 @@ async function analyseTrades() {
         console.log('  all        run every report (default)')
         return
     }
-    report.run(transactions, rawTransactions)
+    report.run(transactions, rawTransactions, aggregate)
 }
 
 analyseTrades()
