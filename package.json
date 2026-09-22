@@ -12,7 +12,8 @@
     "backfill-aggregate-prod": "npm run build && node --env-file=prod.env dist/backfillAggregate.js",
     "add-transfer-prod": "npm run build && node --env-file=prod.env dist/addTransfer.js",
     "combine-prod": "npm run build && node --env-file=prod.env dist/combine.js",
-    "sort-prod": "npm run build && node --env-file=prod.env dist/sortTrades.js"
+    "sort-prod": "npm run build && node --env-file=prod.env dist/sortTrades.js",
+    "seed-webapp-prod": "npm run build && node --env-file=prod.env dist/generateWebStats.js"
   },
   "keywords": [],
   "author": "",

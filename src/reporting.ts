@@ -4,7 +4,7 @@ import { BigNumber } from "@ethersproject/bignumber";
 import { RATIO_MULTI } from "./conts";
 import { getTxRatio } from "./quote";
 import { TxData } from "./types";
-import { ReportTransaction, computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
+import { MatchedEntry, ReportTransaction, buildMatchedEntries, computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
 import { AggregateData, ExternalTransfer, getAggregateData } from "./aggregate";
 import { loadArchivedTransactions } from "./archives";
 
@@ -262,32 +262,6 @@ function reportMatchedDetail(transactions: ReportTransaction[], aggregate: Aggre
 // ---------------------------------------------------------------------------
 // reports: matched-daily / matched-monthly (net gain/loss grouped by closing date)
 // ---------------------------------------------------------------------------
-
-interface MatchedEntry {
-    date: Date
-    netEth: BigNumber
-    tradeCount: number
-}
-
-// combines still-archived groups with groups still present in the live file into one list of
-// closed positions, each with its closing date, net gain/loss and trade count
-function buildMatchedEntries(transactions: ReportTransaction[], aggregate: AggregateData, fallbackFeeStrk?: BigNumber): MatchedEntry[] {
-    const entries: MatchedEntry[] = aggregate.matchedGroups.map(g => ({
-        date: new Date(g.toTimestamp),
-        netEth: BigNumber.from(g.boughtEth).sub(g.soldEth).sub(g.txFeesEth).sub(g.failedFeesEth),
-        tradeCount: g.tradeCount
-    }))
-    const { groups } = getMatchGroups(transactions)
-    for (const { trades } of groups) {
-        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades, fallbackFeeStrk)
-        entries.push({
-            date: trades[trades.length - 1].date,
-            netEth: boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth),
-            tradeCount: trades.length
-        })
-    }
-    return entries.sort((a, b) => a.date.getTime() - b.date.getTime())
-}
 
 function formatMonthYear(date: Date): string {
     return `${(date.getMonth() + 1).toString().padStart(2, '0')}.${(date.getFullYear() % 100).toString().padStart(2, '0')}`

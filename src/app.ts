@@ -9,7 +9,7 @@ import { getAccount } from './account';
 import { addTransaction, checkTransactions, getBlock, getFailedTransactions } from './transactions';
 import { getEstimatedTotalFee, getMaxTotalFee, getRatio, serializeResourceBounds } from './math';
 import { MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TARGET_ETH_BALANCE, TIP } from './conts';
-import { QuoteData } from './types';
+import { QuoteData, TxData } from './types';
 import { notifyRunSucceeded, restartEthernetAdapterIfNetworkIssue } from './ethernet';
 
 const useTestnet = process.env.USE_TESTNET === 'true'
@@ -104,21 +104,19 @@ async function run() {
         if (quote.wasMatch && quote.matchedTx?.length) {
             matchedBy = quote.matchedTx[0]
         }
-        await addTransaction(
-            {
-                hash: response.transaction_hash,
-                sell: quote.sell,
-                matchedBy,
-                ...{ failedFeesIncluded: matchedBy && failedFees.gt(0) ? failedFees.toString() : undefined },
-                timestamp: Date.now(),
-                expectedFeesStrk: quote.feesStrk?.toString(),
-                expectedMaxFees: maxTotalFee.toString(),
-                resourceBounds: serializeResourceBounds(estimate.resourceBounds),
-                expectedBuyAmount: quote.quote.buyAmount.toString(),
-                estimatedSlippage: quote.quote.estimatedSlippage
-            },
-            quote.matchedTx
-        )
+        const newTx: TxData = {
+            hash: response.transaction_hash,
+            sell: quote.sell,
+            matchedBy,
+            ...{ failedFeesIncluded: matchedBy && failedFees.gt(0) ? failedFees.toString() : undefined },
+            timestamp: Date.now(),
+            expectedFeesStrk: quote.feesStrk?.toString(),
+            expectedMaxFees: maxTotalFee.toString(),
+            resourceBounds: serializeResourceBounds(estimate.resourceBounds),
+            expectedBuyAmount: quote.quote.buyAmount.toString(),
+            estimatedSlippage: quote.quote.estimatedSlippage
+        }
+        await addTransaction(newTx, quote.matchedTx)
     }
 }
 

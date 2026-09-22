@@ -4,6 +4,7 @@ import { getBalances } from "./balances";
 import { BigNumber } from "@ethersproject/bignumber";
 import { FailedTransactions, TxData } from "./types";
 import { getBestTx } from "./quote";
+import { reportTradeToWebapp } from "./webReport";
 
 const NOT_FOUND = 'NOT_FOUND' as const;
 
@@ -176,6 +177,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
     const finished = latest.status === 'SUCCEEDED'
 
     // we only need to get a tx for trading if all tx' have succeeded ... otherwise we wait.
+    let justConfirmedBalance = false
     if (finished && !latest.balanceEth) {
         const { eth, strk } = await getBalances(provider, account)
         if (eth.toString() === "0") {
@@ -208,6 +210,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
         latest.balanceEth = eth.toString()
         latest.balanceStrk = strk.toString()
         needToSave = true
+        justConfirmedBalance = true
         try {
             if (latest.matchedBy)
                 await clearFailedTransaction()
@@ -217,6 +220,10 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
     }
     if (needToSave) {
         await saveTransactionData(transactions)
+    }
+    // report the trade to the webapp exactly once, right after its balances/amounts became known
+    if (justConfirmedBalance) {
+        await reportTradeToWebapp(latest)
     }
     const unMatched = transactions.filter((t) => !t.matchedBy)
     let tx: TxData | undefined = undefined

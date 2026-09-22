@@ -1,0 +1,4 @@
+# deny direct web access to files that must only be reached through ingest.php / data.php
+<FilesMatch "^(config\.php|config\.sample\.php)$">
+    Require all denied
+</FilesMatch>

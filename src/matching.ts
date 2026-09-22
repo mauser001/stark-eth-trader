@@ -1,5 +1,6 @@
 import { BigNumber } from "@ethersproject/bignumber";
 import { TxData } from "./types";
+import { AggregateData } from "./aggregate";
 
 // ---------------------------------------------------------------------------
 // shared trade/match-group helpers used by both reporting.ts and extractMatched.ts
@@ -129,4 +130,40 @@ export function computeMatchGroupTotals(trades: ReportTransaction[], fallbackFee
         : trades.slice(0, -1).reduce((total, trade) =>
             total.add(feeInEth(trade, actualFeesStrk(trade, fallbackFeeStrk))), BigNumber.from(0))
     return { soldEth, boughtEth, txFeesEth, failedFeesEth }
+}
+
+// ---------------------------------------------------------------------------
+// shared helpers for the webapp report + generateWebStats seed script
+// ---------------------------------------------------------------------------
+
+// local day key (YYYY-MM-DD) used to bucket balances/matched-groups per day
+export function dayKey(timestamp: number): string {
+    const d = new Date(timestamp)
+    return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`
+}
+
+export interface MatchedEntry {
+    date: Date
+    netEth: BigNumber
+    tradeCount: number
+}
+
+// combines still-archived groups (from aggregate.ts) with groups still present in the live file
+// into one list of closed positions, each with its closing date, net gain/loss and trade count
+export function buildMatchedEntries(transactions: ReportTransaction[], aggregate: AggregateData, fallbackFeeStrk?: BigNumber): MatchedEntry[] {
+    const entries: MatchedEntry[] = aggregate.matchedGroups.map(g => ({
+        date: new Date(g.toTimestamp),
+        netEth: BigNumber.from(g.boughtEth).sub(g.soldEth).sub(g.txFeesEth).sub(g.failedFeesEth),
+        tradeCount: g.tradeCount
+    }))
+    const { groups } = getMatchGroups(transactions)
+    for (const { trades } of groups) {
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades, fallbackFeeStrk)
+        entries.push({
+            date: trades[trades.length - 1].date,
+            netEth: boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth),
+            tradeCount: trades.length
+        })
+    }
+    return entries.sort((a, b) => a.date.getTime() - b.date.getTime())
 }

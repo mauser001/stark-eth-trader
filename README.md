@@ -47,6 +47,15 @@ Used tech / Prerequisites:
 	}
 ]
 ```
+- FAILED_TRADE_FILE - relative path to the file tracking failed trades / their fees (defaults to `failedTrades.json`)
+- AGGREGATE_FILE - relative path to the aggregate report file that keeps totals for trades removed by `extractMatched` (defaults to `<TRADE_FILE base>_aggregate.json`)
+- TIP - FRI per L2 gas paid on top of the base fee to prioritize inclusion; keep at 0 unless faster inclusion is required
+- EST_L2_GAS - rough L2 gas consumed by a swap, only used to translate the per-gas TIP into an approximate flat STRK cost for profitability checks
+- MAX_GAS_FEES - application-level safety limit (in FRI) for the total tx fee; 0 disables the check
+- FEE_BUFFER_1000 - allowed overshoot (per mille) of the actual tx fee above the fee the trade was calculated with
+- TARGET_ETH_BALANCE - once the latest transaction's ETH balance reaches/exceeds this, the process stops trading; 0 disables the check
+- ETHERNET_ADAPTER_NAME / ETHERNET_RESTART_COOLDOWN_MS / ETHERNET_RESTART_ERROR_WINDOW_MS - optional, used to auto-restart a flaky ethernet adapter on repeated network errors (see `src/ethernet.ts`)
+- WEBAPP_URL / WEBAPP_SECRET - optional, endpoint + shared secret for reporting trades to the webapp dashboard (see [Webapp dashboard](#webapp-dashboard) below); leave both empty to disable reporting entirely
 
 ## Program logic
 
@@ -59,8 +68,24 @@ Used tech / Prerequisites:
 
 Run ```script npm run report-prod ``` to get a short summary of your trades
 
+### Local data & aggregate reports
+
+All trade data lives locally in `TRADE_FILE` (plus `FAILED_TRADE_FILE` for failed-tx fees). Since old matched trades get moved out of the live file by `extract-prod`, running totals for those closed positions are kept separately in `AGGREGATE_FILE` so reports still stay accurate - `npm run backfill-aggregate-prod` (re-)builds it from scratch from the live file + archives, and `npm run add-transfer-prod -- <ethWei|-> <strkWei|-> [note]` records manual wallet top-ups so they aren't counted as trading profit.
 
 ## Cleanup
 
 Run ```script npm extract-prod ``` to to extract already matched trades in ha separate file
+
+## Webapp dashboard
+
+The `webapp/` folder is a small, self-contained PHP + static site (not built by `tsc`) you can deploy to any plain PHP host (e.g. via FTP) to see your stats in a browser: current ETH/STRK balance, a balance-over-time chart, a daily matched-trades chart (net ETH + trade count) and the last 100 trades.
+
+The trader is the only source of truth - after every confirmed trade it POSTs a small snapshot to `webapp/ingest.php` (see `WEBAPP_URL`/`WEBAPP_SECRET` above), which just persists it into small, bounded json files under `webapp/data/`. This never blocks or crashes the trading loop: the local trade file is always saved first, and any reporting failure (offline server, wrong URL, etc.) is only logged as a warning.
+
+To deploy:
+1. Upload the whole `webapp/` folder to your PHP host.
+2. On the server, copy `webapp/config.sample.php` to `webapp/config.php` and fill in `ingestSecret` (must match `WEBAPP_SECRET`), `viewerPassword` (what you'll type on the dashboard) and `dataDir`.
+3. Set `WEBAPP_URL` (pointing at `.../webapp/ingest.php`, not just the folder) and `WEBAPP_SECRET` in `prod.env`.
+4. Run `npm run seed-webapp-prod` once to backfill the dashboard with your full trade history (merges archives + live file); safe to re-run any time to fully reseed.
+5. Open `index.html` in a browser, enter the viewer password once (it's cached in `localStorage` afterwards).
 

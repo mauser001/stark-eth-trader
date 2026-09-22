@@ -5,3 +5,5 @@ data/
 dev.env
 prod.env
 .vscode
+webapp/config.php
+webapp/data/*.json
