@@ -56,3 +56,11 @@ function is_timestamp($v): bool {
 function is_sell_string($v): bool {
     return $v === 'eth' || $v === 'strk';
 }
+
+function is_status_string($v): bool {
+    return $v === 'open' || $v === 'closed';
+}
+
+function is_direction_string($v): bool {
+    return $v === 'up' || $v === 'down';
+}

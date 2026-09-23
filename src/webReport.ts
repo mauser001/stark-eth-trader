@@ -1,6 +1,6 @@
 import { BigNumber } from "@ethersproject/bignumber";
 import { getTransactionData } from "./transactions";
-import { ReportTransaction, computeMatchGroupTotals, dayKey, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
+import { ReportTransaction, buildBalanceTurningPoints, buildWebTradeEntries, computeMatchGroupTotals, dayKey, getAverageActualFeesStrk, getMatchGroups, openerHashesOf, toReportTransactions } from "./matching";
 import { TxData } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -10,19 +10,6 @@ import { TxData } from "./types";
 
 const WEBAPP_URL = process.env.WEBAPP_URL
 const WEBAPP_SECRET = process.env.WEBAPP_SECRET
-
-function tradeToWeb(t: ReportTransaction, netEth?: BigNumber) {
-    return {
-        hash: t.hash,
-        timestamp: t.date.getTime(),
-        sell: t.isSellingEth ? 'eth' : 'strk',
-        sellAmount: t.sellAmount.toString(),
-        buyAmount: t.buyAmount.toString(),
-        actualFees: t.actualFees?.toString(),
-        matched: !!t.matchedBy,
-        netEth: netEth?.toString()
-    }
-}
 
 async function postToWebapp(body: object): Promise<void> {
     const res = await fetch(WEBAPP_URL!, {
@@ -64,13 +51,12 @@ export async function reportTradeToWebapp(newTx: TxData): Promise<void> {
         // if this trade closed a match group, attach its net gain/loss and refresh today's bucket
         const { groups } = getMatchGroups(transactions)
         const closingGroup = groups.find(g => g.hash === latest.hash)
-        let netEth: BigNumber | undefined
+        const fallbackFeeStrk = getAverageActualFeesStrk(transactions)
         let dailyEntry: { date: string, netEth: string, tradeCount: number } | undefined
+        // openers absorbed into this newly-closed group are no longer their own open/closed
+        // entry, so they must be dropped from the server's stored trade list
+        const removeTradeHashes = closingGroup ? openerHashesOf(closingGroup) : []
         if (closingGroup) {
-            const fallbackFeeStrk = getAverageActualFeesStrk(transactions)
-            const totals = computeMatchGroupTotals(closingGroup.trades, fallbackFeeStrk)
-            netEth = totals.boughtEth.sub(totals.soldEth).sub(totals.txFeesEth).sub(totals.failedFeesEth)
-
             const date = dayKey(latest.date.getTime())
             let dayNetEth = BigNumber.from(0)
             let dayTradeCount = 0
@@ -83,7 +69,11 @@ export async function reportTradeToWebapp(newTx: TxData): Promise<void> {
             dailyEntry = { date, netEth: dayNetEth.toString(), tradeCount: dayTradeCount }
         }
 
-        await postToWebapp({ current, balancePoint, trade: tradeToWeb(latest, netEth), dailyEntry })
+        const trade = buildWebTradeEntries(transactions, fallbackFeeStrk).find(t => t.hash === latest.hash)
+        if (!trade) return
+        const turningPoints = buildBalanceTurningPoints(transactions).map(p => ({ date: dayKey(p.date.getTime()), direction: p.direction, diffEth: p.diffEth.toString(), diffStrk: p.diffStrk.toString() }))
+
+        await postToWebapp({ current, balancePoint, trade, removeTradeHashes, dailyEntry, turningPoints })
     } catch (e) {
         console.warn('failed to report trade to webapp: ', e)
     }

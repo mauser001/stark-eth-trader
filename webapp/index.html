@@ -23,7 +23,10 @@
     <div id="dashboard" class="hidden">
         <header>
             <h1>Trader Dashboard</h1>
-            <span id="last-updated" class="muted"></span>
+            <div class="header-right">
+                <span id="last-updated" class="muted"></span>
+                <button id="notify-btn" class="btn-small">Enable alerts</button>
+            </div>
         </header>
 
         <section class="cards">
@@ -38,7 +41,14 @@
         </section>
 
         <section class="panel">
-            <h2>Balances over time</h2>
+            <div class="panel-header">
+                <h2>Balances over time</h2>
+                <div class="range-buttons" id="range-buttons">
+                    <button data-range="week">Last week</button>
+                    <button data-range="month">Last month</button>
+                    <button data-range="all" class="active">All time</button>
+                </div>
+            </div>
             <canvas id="chart-balances" height="90"></canvas>
         </section>
 
@@ -58,7 +68,7 @@
                             <th>Sell</th>
                             <th>Buy</th>
                             <th>Fee (STRK)</th>
-                            <th>Matched</th>
+                            <th>Status</th>
                             <th>Net ETH</th>
                         </tr>
                     </thead>

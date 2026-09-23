@@ -1,7 +1,7 @@
 import { BigNumber } from "@ethersproject/bignumber";
 import { getTransactionData } from "./transactions";
 import { loadArchivedTransactions } from "./archives";
-import { ReportTransaction, buildMatchedEntries, computeMatchGroupTotals, dayKey, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
+import { ReportTransaction, buildBalanceTurningPoints, buildMatchedEntries, buildWebTradeEntries, dayKey, getAverageActualFeesStrk, toReportTransactions } from "./matching";
 import { getAggregateData } from "./aggregate";
 import { TxData } from "./types";
 
@@ -35,22 +35,9 @@ async function seed() {
         .map(([date, t]) => ({ date, eth: t.balanceEth.toString(), strk: t.balanceStrk.toString() }))
 
     // net gain/loss per closing hash, so the last-100 trades list can show it for closing trades
-    const { groups } = getMatchGroups(transactions)
-    const netEthByClosingHash = new Map<string, string>()
-    for (const g of groups) {
-        const totals = computeMatchGroupTotals(g.trades, fallbackFeeStrk)
-        netEthByClosingHash.set(g.hash, totals.boughtEth.sub(totals.soldEth).sub(totals.txFeesEth).sub(totals.failedFeesEth).toString())
-    }
-    const trades = transactions.slice(-100).map(t => ({
-        hash: t.hash,
-        timestamp: t.date.getTime(),
-        sell: t.isSellingEth ? 'eth' : 'strk',
-        sellAmount: t.sellAmount.toString(),
-        buyAmount: t.buyAmount.toString(),
-        actualFees: t.actualFees?.toString(),
-        matched: !!t.matchedBy,
-        netEth: netEthByClosingHash.get(t.hash)
-    }))
+    const trades = buildWebTradeEntries(transactions, fallbackFeeStrk).slice(-100)
+
+    const turningPoints = buildBalanceTurningPoints(transactions).map(p => ({ date: dayKey(p.date.getTime()), direction: p.direction, diffEth: p.diffEth.toString(), diffStrk: p.diffStrk.toString() }))
 
     const entries = buildMatchedEntries(transactions, aggregate, fallbackFeeStrk)
     const dailyByDate = new Map<string, { date: string, netEth: BigNumber, tradeCount: number }>()
@@ -71,7 +58,7 @@ async function seed() {
     const res = await fetch(WEBAPP_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Report-Secret': WEBAPP_SECRET },
-        body: JSON.stringify({ seed: { current, balances, trades, dailyMatched } })
+        body: JSON.stringify({ seed: { current, balances, trades, dailyMatched, turningPoints } })
     })
     const text = await res.text().catch(() => '')
     // ingest.php always replies with json - anything else means the request never actually
@@ -83,7 +70,7 @@ async function seed() {
         parsed = undefined
     }
     if (res.ok && parsed?.ok) {
-        console.log(`seeded webapp: ${balances.length} balance point(s), ${trades.length} trade(s), ${dailyMatched.length} daily entrie(s)`)
+        console.log(`seeded webapp: ${balances.length} balance point(s), ${trades.length} trade(s), ${dailyMatched.length} daily entrie(s), ${turningPoints.length} turning point(s)`)
     } else {
         console.log(`seed failed: ${res.status} ${text}`)
     }

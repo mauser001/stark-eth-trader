@@ -167,3 +167,92 @@ export function buildMatchedEntries(transactions: ReportTransaction[], aggregate
     }
     return entries.sort((a, b) => a.date.getTime() - b.date.getTime())
 }
+
+// ---------------------------------------------------------------------------
+// shared helper: webapp "last 100 trades" list - only genuinely open trades
+// (never matched) and the closing trade of each match group (with the group's
+// date range / trade count attached); intermediate "opener" trades that got
+// absorbed into a closed group are left out entirely
+// ---------------------------------------------------------------------------
+
+export interface WebTradeEntry {
+    hash: string
+    timestamp: number
+    sell: 'eth' | 'strk'
+    sellAmount: string
+    buyAmount: string
+    actualFees?: string
+    netEth?: string
+    status: 'open' | 'closed'
+    fromTimestamp?: number
+    toTimestamp?: number
+    tradeCount?: number
+}
+
+export function buildWebTradeEntries(transactions: ReportTransaction[], fallbackFeeStrk?: BigNumber): WebTradeEntry[] {
+    const { groups, matchedHashes } = getMatchGroups(transactions)
+    const groupByClosingHash = new Map(groups.map(g => [g.hash, g]))
+
+    return transactions
+        .filter(t => !matchedHashes.has(t.hash) || groupByClosingHash.has(t.hash))
+        .map(t => {
+            const group = groupByClosingHash.get(t.hash)
+            const totals = group ? computeMatchGroupTotals(group.trades, fallbackFeeStrk) : undefined
+            // the closing trade itself doesn't count as one of the "matched" trades it closed
+            const openers = group ? group.trades.slice(0, -1) : undefined
+            return {
+                hash: t.hash,
+                timestamp: t.date.getTime(),
+                sell: t.isSellingEth ? 'eth' : 'strk',
+                sellAmount: t.sellAmount.toString(),
+                buyAmount: t.buyAmount.toString(),
+                actualFees: t.actualFees?.toString(),
+                netEth: totals ? totals.boughtEth.sub(totals.soldEth).sub(totals.txFeesEth).sub(totals.failedFeesEth).toString() : undefined,
+                status: group ? 'closed' : 'open',
+                fromTimestamp: openers?.length ? openers[0].date.getTime() : undefined,
+                toTimestamp: openers?.length ? openers[openers.length - 1].date.getTime() : undefined,
+                tradeCount: openers ? openers.length : undefined
+            } as WebTradeEntry
+        })
+}
+
+// hashes of "opener" trades that get absorbed into the given closing group (i.e. every trade in
+// the group except the closer itself) - used to drop them from the webapp's stored trade list
+// when a group closes, since they no longer count as their own open/closed entry
+export function openerHashesOf(group: MatchGroup): string[] {
+    return group.trades.slice(0, -1).map(t => t.hash)
+}
+
+// ---------------------------------------------------------------------------
+// shared helper: balance "turning points" for the webapp balances chart - the
+// same direction-change detection used by the console "backwards" report
+// ---------------------------------------------------------------------------
+
+export interface BalanceTurningPoint {
+    date: Date
+    direction: 'up' | 'down'
+    diffEth: BigNumber
+    diffStrk: BigNumber
+    balanceEth: BigNumber
+    balanceStrk: BigNumber
+}
+
+// walking back from the latest trade, records a point every time the balance as a whole (both
+// eth and strk) reversed direction since the previous recorded point - same logic the console
+// "backwards" report uses, returned in chronological order instead of being logged directly
+export function buildBalanceTurningPoints(transactions: ReportTransaction[]): BalanceTurningPoint[] {
+    if (transactions.length < 2) return []
+    const points: BalanceTurningPoint[] = []
+    let compare = transactions[transactions.length - 1]
+    for (let i = transactions.length - 2; i >= 0; i--) {
+        const t = transactions[i]
+        if (t.balanceEth.gt(compare.balanceEth) && t.balanceStrk.gt(compare.balanceStrk)) {
+            points.push({ date: t.date, direction: 'down', diffEth: t.balanceEth.sub(compare.balanceEth), diffStrk: t.balanceStrk.sub(compare.balanceStrk), balanceEth: t.balanceEth, balanceStrk: t.balanceStrk })
+            compare = t
+        } else if (t.balanceEth.lt(compare.balanceEth) && t.balanceStrk.lt(compare.balanceStrk)) {
+            points.push({ date: t.date, direction: 'up', diffEth: compare.balanceEth.sub(t.balanceEth), diffStrk: compare.balanceStrk.sub(t.balanceStrk), balanceEth: t.balanceEth, balanceStrk: t.balanceStrk })
+            compare = t
+        }
+    }
+    return points.reverse()
+}

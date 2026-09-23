@@ -4,7 +4,7 @@ import { BigNumber } from "@ethersproject/bignumber";
 import { RATIO_MULTI } from "./conts";
 import { getTxRatio } from "./quote";
 import { TxData } from "./types";
-import { MatchedEntry, ReportTransaction, buildMatchedEntries, computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
+import { MatchedEntry, ReportTransaction, buildBalanceTurningPoints, buildMatchedEntries, computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
 import { AggregateData, ExternalTransfer, getAggregateData } from "./aggregate";
 import { loadArchivedTransactions } from "./archives";
 
@@ -322,33 +322,24 @@ function reportUnmatched(transactions: ReportTransaction[]) {
 // report: backwards (balance changes walking back from the latest trade)
 // ---------------------------------------------------------------------------
 
-function haveBothChangedDirection(t: ReportTransaction, compare: ReportTransaction): ReportTransaction {
-    if (t.balanceEth.gt(compare.balanceEth) && t.balanceStrk.gt(compare.balanceStrk)) {
-        const diffEth = t.balanceEth.sub(compare.balanceEth)
-        const diffStrk = t.balanceStrk.sub(compare.balanceStrk)
-        console.log(`Down ${formatDayMonthYear(t.date)} Eth: ${formatBig8(diffEth)} Strk: ${formatBig8(diffStrk)}`)
-        return t;
-    } else if (t.balanceEth.lt(compare.balanceEth) && t.balanceStrk.lt(compare.balanceStrk)) {
-        const diffEth = compare.balanceEth.sub(t.balanceEth)
-        const diffStrk = compare.balanceStrk.sub(t.balanceStrk)
-        console.log(`Up ${formatDayMonthYear(t.date)} Eth: ${formatBig8(diffEth)} Strk: ${formatBig8(diffStrk)}`)
-        return t;
-    }
-    return compare;
-}
-
 function reportBackwards(transactions: ReportTransaction[]) {
     console.log('-----------------------Analyse backwards------------------------')
     const latest = transactions[transactions.length - 1];
-    let matched: ReportTransaction = latest;
     printBalance('Latest Balance', latest.balanceEth, latest.balanceStrk, latest.date);
 
-    for (let i = transactions.length - 2; i >= 0; i--) {
-        matched = haveBothChangedDirection(transactions[i], matched)
+    const points = buildBalanceTurningPoints(transactions)
+    for (const p of points) {
+        const label = p.direction === 'down' ? 'Down' : 'Up'
+        console.log(`${label} ${formatDayMonthYear(p.date)} Eth: ${formatBig8(p.diffEth)} Strk: ${formatBig8(p.diffStrk)}`)
     }
 
     console.log('Total change')
-    haveBothChangedDirection(matched, latest)
+    const earliest = points.length ? points[0] : { balanceEth: latest.balanceEth, balanceStrk: latest.balanceStrk }
+    if (earliest.balanceEth.lt(latest.balanceEth) && earliest.balanceStrk.lt(latest.balanceStrk)) {
+        console.log(`Up ${formatDayMonthYear(latest.date)} Eth: ${formatBig8(latest.balanceEth.sub(earliest.balanceEth))} Strk: ${formatBig8(latest.balanceStrk.sub(earliest.balanceStrk))}`)
+    } else if (earliest.balanceEth.gt(latest.balanceEth) && earliest.balanceStrk.gt(latest.balanceStrk)) {
+        console.log(`Down ${formatDayMonthYear(latest.date)} Eth: ${formatBig8(earliest.balanceEth.sub(latest.balanceEth))} Strk: ${formatBig8(earliest.balanceStrk.sub(latest.balanceStrk))}`)
+    }
 }
 
 // merges the archived (already-extracted) trades back in with the live ones and re-sorts by

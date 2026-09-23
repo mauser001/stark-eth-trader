@@ -19,4 +19,5 @@ echo json_encode([
     'balances' => read_json_file("$dataDir/balances.json", []),
     'trades' => read_json_file("$dataDir/trades.json", []),
     'dailyMatched' => read_json_file("$dataDir/daily_matched.json", []),
+    'turningPoints' => read_json_file("$dataDir/turning_points.json", []),
 ]);
