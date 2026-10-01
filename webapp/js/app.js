@@ -1,5 +1,10 @@
+// Bump APP_VERSION and the ?v= query param on the app.js script tag in index.html whenever this
+// file changes, so browsers don't keep serving a stale cached copy.
+const APP_VERSION = '7';
+
 const STORAGE_KEY = 'trader_viewer_password';
 const LAST_HASH_KEY = 'trader_last_trade_hash';
+const WELCOME_ALERT_KEY = 'trader_welcome_alert_shown';
 const POLL_INTERVAL_MS = 30000;
 
 function formatWei(weiStr, decimals = 5) {
@@ -98,6 +103,7 @@ function renderBalancesChart(balances, turningPoints) {
                     pointRadius: turningPointData.map(v => v == null ? 0 : 10),
                     pointHoverRadius: turningPointData.map(v => v == null ? 0 : 12),
                     pointStyle: 'triangle',
+                    pointRotation: filtered.map(b => turningByDate.get(b.date)?.direction === 'down' ? 180 : 0),
                     pointBackgroundColor: turningPointColors,
                     pointBorderColor: '#e6e9ef',
                     pointBorderWidth: turningPointData.map(v => v == null ? 0 : 1.5)
@@ -130,9 +136,10 @@ function renderBalancesChart(balances, turningPoints) {
 }
 
 function renderDailyChart(daily) {
-    const labels = daily.map(d => d.date);
-    const net = daily.map(d => Number(formatWei(d.netEth, 8)));
-    const counts = daily.map(d => d.tradeCount);
+    const filtered = filterByRange(daily, currentRange);
+    const labels = filtered.map(d => d.date);
+    const net = filtered.map(d => Number(formatWei(d.netEth, 8)));
+    const counts = filtered.map(d => d.tradeCount);
 
     const ctx = document.getElementById('chart-daily');
     if (dailyChart) dailyChart.destroy();
@@ -210,6 +217,12 @@ function render(data) {
     renderTrades(data.trades || []);
 }
 
+async function sendPasswordToServiceWorker(password, currentHash) {
+    if (!('serviceWorker' in navigator)) return;
+    const registration = await navigator.serviceWorker.ready;
+    registration.active?.postMessage({ type: 'set-password', password, currentHash });
+}
+
 async function tryLoad(password) {
     const data = await fetchData(password);
     render(data);
@@ -223,7 +236,10 @@ document.getElementById('range-buttons').addEventListener('click', (e) => {
     if (!btn) return;
     currentRange = btn.dataset.range;
     for (const b of document.querySelectorAll('#range-buttons button')) b.classList.toggle('active', b === btn);
-    if (latestData) renderBalancesChart(latestData.balances || [], latestData.turningPoints || []);
+    if (latestData) {
+        renderBalancesChart(latestData.balances || [], latestData.turningPoints || []);
+        renderDailyChart(latestData.dailyMatched || []);
+    }
 });
 
 // ---------------------------------------------------------------------------
@@ -246,11 +262,53 @@ function updateNotifyButton() {
     }
 }
 
+async function showWelcomeAlertOnce() {
+    if (!('Notification' in window) || Notification.permission !== 'granted' || localStorage.getItem(WELCOME_ALERT_KEY)) return;
+    try {
+        const options = {
+            body: 'Trade alerts are enabled on this device.',
+            tag: 'trader-welcome-alert'
+        };
+        if ('serviceWorker' in navigator) {
+            const registration = await navigator.serviceWorker.ready;
+            await registration.showNotification('Trader Dashboard', options);
+        } else {
+            new Notification('Trader Dashboard', options);
+        }
+        localStorage.setItem(WELCOME_ALERT_KEY, '1');
+    } catch (e) {
+        // Leave the flag unset so the next page load can retry if notifications are allowed.
+    }
+}
+
 document.getElementById('notify-btn').addEventListener('click', async () => {
     if (!('Notification' in window)) return;
     await Notification.requestPermission();
     updateNotifyButton();
+    if (Notification.permission === 'granted') {
+        await showWelcomeAlertOnce();
+        await registerBackgroundSync();
+    }
 });
+
+// best-effort: keeps alerting about new trades while the browser is running even if the
+// dashboard tab/window is closed, via the Periodic Background Sync API. Only supported on
+// Chromium browsers and only fires reliably once the dashboard is installed as a PWA - where
+// unsupported this silently no-ops and foreground polling (pollForNewTrade) still works.
+async function registerBackgroundSync() {
+    if (!('serviceWorker' in navigator)) return;
+    try {
+        const reg = await navigator.serviceWorker.ready;
+        if ('periodicSync' in reg) {
+            const status = await navigator.permissions.query({ name: 'periodic-background-sync' });
+            if (status.state === 'granted') {
+                await reg.periodicSync.register('poll-trades', { minInterval: 15 * 60 * 1000 });
+            }
+        }
+    } catch (e) {
+        // periodic background sync unsupported/denied - ignore
+    }
+}
 
 async function pollForNewTrade() {
     if (!storedPassword || document.hidden) return;
@@ -261,12 +319,15 @@ async function pollForNewTrade() {
         render(data);
         if (newTrade && data.current) {
             localStorage.setItem(LAST_HASH_KEY, data.current.hash);
+            navigator.serviceWorker?.ready.then(registration => {
+                registration.active?.postMessage({ type: 'seen-trade', hash: data.current.hash });
+            });
             if ('Notification' in window && Notification.permission === 'granted') {
                 const latestTrade = (data.trades || [])[data.trades.length - 1];
                 const detail = latestTrade
                     ? `${latestTrade.sell === 'eth' ? 'ETH → STRK' : 'STRK → ETH'}: sold ${formatWei(latestTrade.sellAmount, 4)}, bought ${formatWei(latestTrade.buyAmount, 4)}`
                     : '';
-                new Notification('New trade executed', { body: detail });
+                new Notification('New trade executed', { body: detail, tag: `trade-${data.current.hash}` });
             }
         }
     } catch (e) {
@@ -276,10 +337,22 @@ async function pollForNewTrade() {
 
 async function init() {
     updateNotifyButton();
+    if ('serviceWorker' in navigator) {
+        try {
+            await navigator.serviceWorker.register(`sw.js?v=${APP_VERSION}`);
+        } catch (e) {
+            // service worker unsupported/blocked - foreground polling still works
+        }
+    }
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
         try {
             await tryLoad(stored);
+            await sendPasswordToServiceWorker(stored, latestData?.current?.hash);
+            if (Notification.permission === 'granted') {
+                await showWelcomeAlertOnce();
+                await registerBackgroundSync();
+            }
             setInterval(pollForNewTrade, POLL_INTERVAL_MS);
             return;
         } catch (e) {
@@ -295,6 +368,11 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     try {
         await tryLoad(password);
         localStorage.setItem(STORAGE_KEY, password);
+        await sendPasswordToServiceWorker(password, latestData?.current?.hash);
+        if (Notification.permission === 'granted') {
+            await showWelcomeAlertOnce();
+            await registerBackgroundSync();
+        }
         setInterval(pollForNewTrade, POLL_INTERVAL_MS);
     } catch (err) {
         showLogin('Wrong password, try again.');

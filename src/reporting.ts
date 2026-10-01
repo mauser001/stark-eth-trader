@@ -334,11 +334,11 @@ function reportBackwards(transactions: ReportTransaction[]) {
     }
 
     console.log('Total change')
-    const earliest = points.length ? points[0] : { balanceEth: latest.balanceEth, balanceStrk: latest.balanceStrk }
+    const earliest = transactions[0]
     if (earliest.balanceEth.lt(latest.balanceEth) && earliest.balanceStrk.lt(latest.balanceStrk)) {
-        console.log(`Up ${formatDayMonthYear(latest.date)} Eth: ${formatBig8(latest.balanceEth.sub(earliest.balanceEth))} Strk: ${formatBig8(latest.balanceStrk.sub(earliest.balanceStrk))}`)
+        console.log(`Up ${formatDayMonthYear(earliest.date)} Eth: ${formatBig8(latest.balanceEth.sub(earliest.balanceEth))} Strk: ${formatBig8(latest.balanceStrk.sub(earliest.balanceStrk))}`)
     } else if (earliest.balanceEth.gt(latest.balanceEth) && earliest.balanceStrk.gt(latest.balanceStrk)) {
-        console.log(`Down ${formatDayMonthYear(latest.date)} Eth: ${formatBig8(earliest.balanceEth.sub(latest.balanceEth))} Strk: ${formatBig8(earliest.balanceStrk.sub(latest.balanceStrk))}`)
+        console.log(`Down ${formatDayMonthYear(earliest.date)} Eth: ${formatBig8(earliest.balanceEth.sub(latest.balanceEth))} Strk: ${formatBig8(earliest.balanceStrk.sub(latest.balanceStrk))}`)
     }
 }
 

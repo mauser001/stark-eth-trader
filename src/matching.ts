@@ -239,7 +239,7 @@ export interface BalanceTurningPoint {
 
 // walking back from the latest trade, records a point every time the balance as a whole (both
 // eth and strk) reversed direction since the previous recorded point - same logic the console
-// "backwards" report uses, returned in chronological order instead of being logged directly
+// "backwards" report uses. Points stay newest-first to match the backwards walk.
 export function buildBalanceTurningPoints(transactions: ReportTransaction[]): BalanceTurningPoint[] {
     if (transactions.length < 2) return []
     const points: BalanceTurningPoint[] = []
@@ -254,5 +254,5 @@ export function buildBalanceTurningPoints(transactions: ReportTransaction[]): Ba
             compare = t
         }
     }
-    return points.reverse()
+    return points
 }

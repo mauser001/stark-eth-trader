@@ -1,0 +1,17 @@
+{
+  "name": "Trader Dashboard",
+  "short_name": "Trader",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#171b21",
+  "theme_color": "#171b21",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
