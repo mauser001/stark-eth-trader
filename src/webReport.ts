@@ -63,7 +63,7 @@ export async function reportTradeToWebapp(newTx: TxData): Promise<void> {
             for (const g of groups) {
                 if (dayKey(g.trades[g.trades.length - 1].date.getTime()) !== date) continue
                 const t = computeMatchGroupTotals(g.trades, fallbackFeeStrk)
-                dayNetEth = dayNetEth.add(t.boughtEth.sub(t.soldEth).sub(t.txFeesEth).sub(t.failedFeesEth))
+                dayNetEth = dayNetEth.add(t.boughtEth.sub(t.soldEth).sub(t.txFeesEth))
                 dayTradeCount += g.trades.length
             }
             dailyEntry = { date, netEth: dayNetEth.toString(), tradeCount: dayTradeCount }

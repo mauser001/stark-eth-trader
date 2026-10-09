@@ -70,7 +70,7 @@ Run ```script npm run report-prod ``` to get a short summary of your trades
 
 ### Local data & aggregate reports
 
-All trade data lives locally in `TRADE_FILE` (plus `FAILED_TRADE_FILE` for failed-tx fees). Since old matched trades get moved out of the live file by `extract-prod`, running totals for those closed positions are kept separately in `AGGREGATE_FILE` so reports still stay accurate - `npm run backfill-aggregate-prod` (re-)builds it from scratch from the live file + archives, and `npm run add-transfer-prod -- <ethWei|-> <strkWei|-> [note]` records manual wallet top-ups so they aren't counted as trading profit.
+All trade data lives locally in `TRADE_FILE` (plus `FAILED_TRADE_FILE` for failed-tx fees). Since old matched trades get moved out of the live file by `extract-prod`, running totals for those closed positions are kept separately in `AGGREGATE_FILE` so reports still stay accurate - `npm run backfill-aggregate-prod` rebuilds or refreshes archived-group totals from the archives and live file, and `npm run add-transfer-prod -- <ethWei|-> <strkWei|-> [note]` records manual wallet top-ups so they aren't counted as trading profit. Matched-trade P&L compares ETH received with ETH paid, subtracts the closing transaction fee once, and excludes fees from earlier and failed transactions. When an actual closing fee is unavailable, matched reports estimate it using the average recorded STRK fee, capped at 1 STRK, and convert it using the last opening trade's exchange rate; the reports identify estimated and unavailable fees separately.
 
 ## Cleanup
 
@@ -88,4 +88,3 @@ To deploy:
 3. Set `WEBAPP_URL` (pointing at `.../webapp/ingest.php`, not just the folder) and `WEBAPP_SECRET` in `prod.env`.
 4. Run `npm run seed-webapp-prod` once to backfill the dashboard with your full trade history (merges archives + live file); safe to re-run any time to fully reseed.
 5. Open `index.html` in a browser, enter the viewer password once (it's cached in `localStorage` afterwards).
-

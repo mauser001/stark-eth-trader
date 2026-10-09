@@ -1,11 +1,11 @@
 import { DATA_PATH, getTransactionData } from "./transactions";
 import { computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
-import { appendMatchedGroupSummaries, MatchedGroupSummary } from "./aggregate";
+import { upsertMatchedGroupSummaries, MatchedGroupSummary } from "./aggregate";
 import { loadArchivedTransactions } from "./archives";
 import { TxData } from "./types";
 
-// one-off backfill: reconstructs matched-group totals for trades that were already extracted by
-// extractMatched.ts in the past (the "trades_prod_matched_*.json" files). Those archives only
+// backfill: reconstructs and refreshes matched-group totals for trades already extracted by
+// extractMatched.ts (the "trades_prod_matched_*.json" files). Those archives only
 // contain the "opener" trades of each group - the closing trade's own buy/sell amounts are needed
 // too, and it normally still lives in the current active trade file (or in a later archive, if it
 // was itself later matched again). So we merge every archive + the current file into one combined
@@ -17,7 +17,9 @@ async function backfill() {
         return
     }
     const byHash = new Map<string, TxData>()
-    for (const t of loadArchivedTransactions()) {
+    const archivedTransactions = loadArchivedTransactions()
+    const archivedHashes = new Set(archivedTransactions.map(t => t.hash))
+    for (const t of archivedTransactions) {
         byHash.set(t.hash, t)
     }
     const current = await getTransactionData()
@@ -31,7 +33,8 @@ async function backfill() {
     const reportTransactions = toReportTransactions(combined)
     const { groups } = getMatchGroups(reportTransactions)
     const fallbackFeeStrk = getAverageActualFeesStrk(reportTransactions)
-    const summaries: MatchedGroupSummary[] = groups.map(({ trades }) => {
+    const archivedGroups = groups.filter(({ trades }) => trades.some(t => archivedHashes.has(t.hash)))
+    const summaries: MatchedGroupSummary[] = archivedGroups.map(({ trades }) => {
         const totals = computeMatchGroupTotals(trades, fallbackFeeStrk)
         return {
             closingHash: trades[trades.length - 1].hash,
@@ -42,10 +45,12 @@ async function backfill() {
             boughtEth: totals.boughtEth.toString(),
             txFeesEth: totals.txFeesEth.toString(),
             failedFeesEth: totals.failedFeesEth.toString(),
+            closingFeeKnown: totals.closingFeeKnown,
+            closingFeeEstimated: totals.closingFeeEstimated,
         }
     })
-    const added = await appendMatchedGroupSummaries(summaries)
-    console.log(`backfilled ${added} new matched group(s) into the aggregate report data (${groups.length} group(s) found in total)`)
+    const recorded = await upsertMatchedGroupSummaries(summaries)
+    console.log(`backfilled ${recorded} archived matched group(s) into the aggregate report data (${archivedGroups.length} archived group(s) found)`)
 }
 
 backfill()

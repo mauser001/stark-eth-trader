@@ -1,6 +1,6 @@
 import { DATA_PATH, getTransactionData, saveTransactionData } from "./transactions";
 import { computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
-import { appendMatchedGroupSummaries, MatchedGroupSummary } from "./aggregate";
+import { upsertMatchedGroupSummaries, MatchedGroupSummary } from "./aggregate";
 import { TxData } from "./types";
 
 // before we physically remove the matched (opener) trades, summarize the full match groups
@@ -22,10 +22,12 @@ async function archiveMatchGroups(transactions: TxData[]) {
             boughtEth: totals.boughtEth.toString(),
             txFeesEth: totals.txFeesEth.toString(),
             failedFeesEth: totals.failedFeesEth.toString(),
+            closingFeeKnown: totals.closingFeeKnown,
+            closingFeeEstimated: totals.closingFeeEstimated,
         }
     })
-    const added = await appendMatchedGroupSummaries(summaries)
-    console.log(`archived ${added} new matched group(s) into the aggregate report data (${groups.length} group(s) present)`)
+    const recorded = await upsertMatchedGroupSummaries(summaries)
+    console.log(`recorded or refreshed ${recorded} matched group(s) in the aggregate report data (${groups.length} group(s) present)`)
 }
 
 async function extractMatched() {

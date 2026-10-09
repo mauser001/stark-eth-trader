@@ -152,29 +152,34 @@ function groupDateLabel(trades: ReportTransaction[]): string {
 
 // totals of matched groups already archived by extractMatched (their opener trades no longer
 // exist in the live trade file, so they can only be recovered from the aggregate data)
-function archivedTotals(aggregate: AggregateData): { soldEth: BigNumber, boughtEth: BigNumber, txFeesEth: BigNumber, failedFeesEth: BigNumber, groupCount: number } {
+function archivedTotals(aggregate: AggregateData): { soldEth: BigNumber, boughtEth: BigNumber, txFeesEth: BigNumber, failedFeesEth: BigNumber, unknownClosingFeeCount: number, estimatedClosingFeeCount: number, groupCount: number } {
     let soldEth = BigNumber.from(0)
     let boughtEth = BigNumber.from(0)
     let txFeesEth = BigNumber.from(0)
     let failedFeesEth = BigNumber.from(0)
+    let unknownClosingFeeCount = 0
+    let estimatedClosingFeeCount = 0
     for (const g of aggregate.matchedGroups) {
         soldEth = soldEth.add(g.soldEth)
         boughtEth = boughtEth.add(g.boughtEth)
-        txFeesEth = txFeesEth.add(g.txFeesEth)
+        if (g.closingFeeKnown === true || g.closingFeeEstimated === true) txFeesEth = txFeesEth.add(g.txFeesEth)
         failedFeesEth = failedFeesEth.add(g.failedFeesEth)
+        if (g.closingFeeEstimated === true) estimatedClosingFeeCount++
+        else if (g.closingFeeKnown !== true) unknownClosingFeeCount++
     }
-    return { soldEth, boughtEth, txFeesEth, failedFeesEth, groupCount: aggregate.matchedGroups.length }
+    return { soldEth, boughtEth, txFeesEth, failedFeesEth, unknownClosingFeeCount, estimatedClosingFeeCount, groupCount: aggregate.matchedGroups.length }
 }
 
 function reportMatched(transactions: ReportTransaction[], aggregate: AggregateData) {
     console.log('-----------------------Matched trades------------------------');
     const { groups } = getMatchGroups(transactions)
     const archived = archivedTotals(aggregate)
-    const fallbackFeeStrk = getAverageActualFeesStrk(transactions)
     let totalSoldEth = archived.soldEth
     let totalBoughtEth = archived.boughtEth
     let totalTxFeesEth = archived.txFeesEth
     let totalFailedFeesEth = archived.failedFeesEth
+    let unknownClosingFeeCount = archived.unknownClosingFeeCount
+    let estimatedClosingFeeCount = archived.estimatedClosingFeeCount
     if (archived.groupCount) {
         console.log(`(including ${archived.groupCount} archived group(s) from previous extractMatched runs)`)
     }
@@ -183,41 +188,48 @@ function reportMatched(transactions: ReportTransaction[], aggregate: AggregateDa
     // filling up with the most recent archived groups when extractMatched removed too many
     const MIN_ENTRIES = 20
     const missing = Math.max(0, MIN_ENTRIES - groups.length)
+    const fallbackFeeStrk = getAverageActualFeesStrk(transactions)
     const filledFromArchive = [...aggregate.matchedGroups]
         .sort((a, b) => b.toTimestamp - a.toTimestamp)
         .slice(0, missing)
-    const displayEntries: { date: Date, label: string, netEth: BigNumber }[] = filledFromArchive.map(g => ({
+    const displayEntries: { date: Date, label: string, netEth: BigNumber, closingFeeKnown: boolean, closingFeeEstimated: boolean }[] = filledFromArchive.map(g => ({
         date: new Date(g.toTimestamp),
         label: `matched ${g.tradeCount - 1} tx (archived)`,
-        netEth: BigNumber.from(g.boughtEth).sub(g.soldEth).sub(g.txFeesEth).sub(g.failedFeesEth)
+        netEth: BigNumber.from(g.boughtEth).sub(g.soldEth).sub(
+            g.closingFeeKnown === true || g.closingFeeEstimated === true ? g.txFeesEth : 0),
+        closingFeeKnown: g.closingFeeKnown === true,
+        closingFeeEstimated: g.closingFeeEstimated === true
     }))
 
     for (const { trades } of groups) {
-        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades, fallbackFeeStrk)
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth, closingFeeKnown, closingFeeEstimated } = computeMatchGroupTotals(trades, fallbackFeeStrk)
         totalSoldEth = totalSoldEth.add(soldEth)
         totalBoughtEth = totalBoughtEth.add(boughtEth)
         totalTxFeesEth = totalTxFeesEth.add(txFeesEth)
         totalFailedFeesEth = totalFailedFeesEth.add(failedFeesEth)
-        const netEth = boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth)
-        displayEntries.push({ date: trades[trades.length - 1].date, label: groupDateLabel(trades), netEth })
+        if (closingFeeEstimated) estimatedClosingFeeCount++
+        else if (!closingFeeKnown) unknownClosingFeeCount++
+        const netEth = boughtEth.sub(soldEth).sub(txFeesEth)
+        displayEntries.push({ date: trades[trades.length - 1].date, label: groupDateLabel(trades), netEth, closingFeeKnown, closingFeeEstimated })
     }
 
-    for (const { date, label, netEth } of displayEntries.sort((a, b) => a.date.getTime() - b.date.getTime())) {
+    for (const { date, label, netEth, closingFeeKnown, closingFeeEstimated } of displayEntries.sort((a, b) => a.date.getTime() - b.date.getTime())) {
         const closingDate = formatDayMonth(date)
+        const feeNote = closingFeeEstimated ? ' after estimated closing fee' : closingFeeKnown ? '' : ' before unknown closing fee'
         if (netEth.isNegative()) {
-            console.warn(`${closingDate}: ${label}: We lost ${formatBig8(netEth.abs())} Eth`)
+            console.warn(`${closingDate}: ${label}: We lost ${formatBig8(netEth.abs())} Eth${feeNote}`)
         } else {
-            console.log(`${closingDate}: ${label}: We made ${formatBig8(netEth)} Eth`)
+            console.log(`${closingDate}: ${label}: We made ${formatBig8(netEth)} Eth${feeNote}`)
         }
     }
     if (totalSoldEth.isZero() && totalBoughtEth.isZero()) {
         console.warn('No matched trades, cannot compare totals')
     } else {
-        const totalNetEth = totalBoughtEth.sub(totalSoldEth).sub(totalTxFeesEth).sub(totalFailedFeesEth)
+        const totalNetEth = totalBoughtEth.sub(totalSoldEth).sub(totalTxFeesEth)
         if (totalNetEth.isNegative()) {
-            console.warn(`In total we lost ${formatBig8(totalNetEth.abs())} Eth after ${formatBig8(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig8(totalFailedFeesEth)} Eth in failed tx fees`)
+            console.warn(`In total we lost ${formatBig8(totalNetEth.abs())} Eth after ${formatBig8(totalTxFeesEth)} Eth in known/estimated closing tx fees; ${estimatedClosingFeeCount} estimated, ${unknownClosingFeeCount} unknown (failed tx fees excluded)`)
         } else {
-            console.log(`In total we made ${formatBig8(totalNetEth)} Eth after ${formatBig8(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig8(totalFailedFeesEth)} Eth in failed tx fees`)
+            console.log(`In total we made ${formatBig8(totalNetEth)} Eth after ${formatBig8(totalTxFeesEth)} Eth in known/estimated closing tx fees; ${estimatedClosingFeeCount} estimated, ${unknownClosingFeeCount} unknown (failed tx fees excluded)`)
         }
     }
 }
@@ -226,35 +238,44 @@ function reportMatchedDetail(transactions: ReportTransaction[], aggregate: Aggre
     console.log('-----------------------Matched trades (detail)------------------------');
     const { groups } = getMatchGroups(transactions)
     const archived = archivedTotals(aggregate)
-    const fallbackFeeStrk = getAverageActualFeesStrk(transactions)
     let totalSoldEth = archived.soldEth
     let totalBoughtEth = archived.boughtEth
     let totalTxFeesEth = archived.txFeesEth
     let totalFailedFeesEth = archived.failedFeesEth
+    let unknownClosingFeeCount = archived.unknownClosingFeeCount
+    let estimatedClosingFeeCount = archived.estimatedClosingFeeCount
+    const fallbackFeeStrk = getAverageActualFeesStrk(transactions)
     if (archived.groupCount) {
         console.log(`(including ${archived.groupCount} archived group(s) from previous extractMatched runs, totals only)`)
     }
     for (const { hash, trades } of groups) {
-        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades, fallbackFeeStrk)
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth, closingFeeKnown, closingFeeEstimated } = computeMatchGroupTotals(trades, fallbackFeeStrk)
         totalSoldEth = totalSoldEth.add(soldEth)
         totalBoughtEth = totalBoughtEth.add(boughtEth)
         totalTxFeesEth = totalTxFeesEth.add(txFeesEth)
         totalFailedFeesEth = totalFailedFeesEth.add(failedFeesEth)
-        const netEth = boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth)
+        if (closingFeeEstimated) estimatedClosingFeeCount++
+        else if (!closingFeeKnown) unknownClosingFeeCount++
+        const netEth = boughtEth.sub(soldEth).sub(txFeesEth)
+        const feeNote = closingFeeEstimated
+            ? `${formatBig8(txFeesEth)} Eth estimated closing tx fee`
+            : closingFeeKnown
+                ? `${formatBig8(txFeesEth)} Eth actual closing tx fee`
+                : 'closing tx fee unknown'
         if (netEth.isNegative()) {
-            console.warn(`We lost ${formatBig8(netEth.abs())} Eth after ${formatBig8(txFeesEth)} Eth in applicable tx fees and ${formatBig8(failedFeesEth)} Eth in failed tx fees, closing tx: ${hash}`)
+            console.warn(`We lost ${formatBig8(netEth.abs())} Eth after ${feeNote} (failed tx fees excluded), closing tx: ${hash}`)
         } else {
-            console.log(`We made ${formatBig8(netEth)} Eth after ${formatBig8(txFeesEth)} Eth in applicable tx fees and ${formatBig8(failedFeesEth)} Eth in failed tx fees, closing tx: ${hash}`)
+            console.log(`We made ${formatBig8(netEth)} Eth after ${feeNote} (failed tx fees excluded), closing tx: ${hash}`)
         }
     }
     if (totalSoldEth.isZero() && totalBoughtEth.isZero()) {
         console.warn('No matched trades, cannot compare totals')
     } else {
-        const totalNetEth = totalBoughtEth.sub(totalSoldEth).sub(totalTxFeesEth).sub(totalFailedFeesEth)
+        const totalNetEth = totalBoughtEth.sub(totalSoldEth).sub(totalTxFeesEth)
         if (totalNetEth.isNegative()) {
-            console.warn(`In total we lost ${formatBig8(totalNetEth.abs())} Eth after ${formatBig8(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig8(totalFailedFeesEth)} Eth in failed tx fees`)
+            console.warn(`In total we lost ${formatBig8(totalNetEth.abs())} Eth after ${formatBig8(totalTxFeesEth)} Eth in known/estimated closing tx fees; ${estimatedClosingFeeCount} estimated, ${unknownClosingFeeCount} unknown (failed tx fees excluded)`)
         } else {
-            console.log(`In total we made ${formatBig8(totalNetEth)} Eth after ${formatBig8(totalTxFeesEth)} Eth in applicable tx fees and ${formatBig8(totalFailedFeesEth)} Eth in failed tx fees`)
+            console.log(`In total we made ${formatBig8(totalNetEth)} Eth after ${formatBig8(totalTxFeesEth)} Eth in known/estimated closing tx fees; ${estimatedClosingFeeCount} estimated, ${unknownClosingFeeCount} unknown (failed tx fees excluded)`)
         }
     }
 }
@@ -268,20 +289,28 @@ function formatMonthYear(date: Date): string {
 }
 
 function reportMatchedByPeriod(entries: MatchedEntry[], periodLabel: (date: Date) => string) {
-    const buckets = new Map<string, { date: Date, netEth: BigNumber, tradeCount: number }>()
+    const buckets = new Map<string, { date: Date, netEth: BigNumber, tradeCount: number, unknownClosingFeeCount: number, estimatedClosingFeeCount: number }>()
     for (const e of entries) {
         const key = periodLabel(e.date)
-        const bucket = buckets.get(key) ?? { date: e.date, netEth: BigNumber.from(0), tradeCount: 0 }
+        const bucket = buckets.get(key) ?? { date: e.date, netEth: BigNumber.from(0), tradeCount: 0, unknownClosingFeeCount: 0, estimatedClosingFeeCount: 0 }
         bucket.netEth = bucket.netEth.add(e.netEth)
         bucket.tradeCount += e.tradeCount
+        bucket.unknownClosingFeeCount += e.unknownClosingFeeCount
+        bucket.estimatedClosingFeeCount += e.estimatedClosingFeeCount
         buckets.set(key, bucket)
     }
     for (const [label, b] of Array.from(buckets.entries()).sort((a, b) => a[1].date.getTime() - b[1].date.getTime())) {
-        if (b.netEth.isNegative()) {
-            console.warn(`${label} we lost ${formatBig8(b.netEth.abs())} ETH on ${b.tradeCount} trades`)
-        } else {
-            console.log(`${label} we made ${formatBig8(b.netEth)} ETH on ${b.tradeCount} trades`)
-        }
+        const result = b.netEth.isNegative()
+            ? `lost ${formatBig8(b.netEth.abs())}`
+            : `made ${formatBig8(b.netEth)}`
+        const feeStatus = b.unknownClosingFeeCount && b.estimatedClosingFeeCount
+            ? ` after ${b.estimatedClosingFeeCount} estimated closing fee(s); ${b.unknownClosingFeeCount} closing fee(s) unknown`
+            : b.unknownClosingFeeCount
+                ? ` before ${b.unknownClosingFeeCount} unknown closing fee(s)`
+            : b.estimatedClosingFeeCount
+                ? ` after ${b.estimatedClosingFeeCount} estimated closing fee(s)`
+                : ' after actual closing fees'
+        console.log(`${label} we ${result} ETH${feeStatus} on ${b.tradeCount} trades`)
     }
 }
 

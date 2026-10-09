@@ -96,22 +96,45 @@ function feeInEth(trade: ReportTransaction, feeStrk: BigNumber): BigNumber {
         : feeStrk.mul(trade.buyAmount).div(trade.sellAmount.sub(actualFees))
 }
 
-// actualFees is only tracked from a certain point onward, so older trades without it would
-// otherwise be treated as fee-free and understate the fees paid - fall back to an average instead
+const MAX_ESTIMATED_FEE_STRK = BigNumber.from("1000000000000000000")
+
+// Missing historical fees use the average recorded fee, capped at 1 STRK to avoid
+// letting exceptional or malformed records create implausible fee estimates.
 export function getAverageActualFeesStrk(transactions: ReportTransaction[]): BigNumber | undefined {
     const known = transactions.map(t => t.actualFees).filter((f): f is BigNumber => !!f && !f.isZero())
     if (!known.length) return undefined
-    return known.reduce((sum, f) => sum.add(f), BigNumber.from(0)).div(known.length)
+    const average = known.reduce((sum, fee) => sum.add(fee), BigNumber.from(0)).div(known.length)
+    return average.gt(MAX_ESTIMATED_FEE_STRK) ? MAX_ESTIMATED_FEE_STRK : average
 }
 
-function actualFeesStrk(trade: ReportTransaction, fallbackFeeStrk?: BigNumber): BigNumber {
-    return trade.actualFees ?? fallbackFeeStrk ?? BigNumber.from(0)
+function getEthPerStrkFromOpener(trades: ReportTransaction[]): BigNumber | undefined {
+    for (let i = trades.length - 2; i >= 0; i--) {
+        const opener = trades[i]
+        const actualFees = opener.actualFees ?? BigNumber.from(0)
+        const ethAmount = opener.isSellingEth ? opener.sellAmount : opener.buyAmount
+        const strkAmount = opener.isSellingEth
+            ? opener.buyAmount.add(actualFees)
+            : opener.sellAmount.sub(actualFees)
+        if (ethAmount.isZero() || strkAmount.lte(0)) continue
+        return ethAmount.mul(BigNumber.from(10).pow(18)).div(strkAmount)
+    }
+    return undefined
+}
+
+function closingFeeInEth(trades: ReportTransaction[], feeStrk: BigNumber): BigNumber {
+    if (feeStrk.isZero()) return BigNumber.from(0)
+    const ethPerStrk = getEthPerStrkFromOpener(trades)
+    if (!ethPerStrk) return BigNumber.from(0)
+    return feeStrk.mul(ethPerStrk).div(BigNumber.from(10).pow(18))
 }
 
 export interface MatchGroupTotals {
     soldEth: BigNumber
     boughtEth: BigNumber
     txFeesEth: BigNumber
+    closingFeeKnown: boolean
+    closingFeeEstimated: boolean
+    // Kept for diagnostics/archive data, but excluded from matched P&L.
     failedFeesEth: BigNumber
 }
 
@@ -125,11 +148,13 @@ export function computeMatchGroupTotals(trades: ReportTransaction[], fallbackFee
         failedFeesEth = failedFeesEth.add(feeInEth(t, t.failedFeesIncluded ?? BigNumber.from(0)))
     }
     const closingTrade = trades[trades.length - 1]
-    const txFeesEth = closingTrade.isSellingEth
-        ? feeInEth(closingTrade, actualFeesStrk(closingTrade, fallbackFeeStrk))
-        : trades.slice(0, -1).reduce((total, trade) =>
-            total.add(feeInEth(trade, actualFeesStrk(trade, fallbackFeeStrk))), BigNumber.from(0))
-    return { soldEth, boughtEth, txFeesEth, failedFeesEth }
+    // Earlier-leg fees are already reflected in the balance-difference amounts; only the
+    // closing fee is an additional cost to subtract from the group's ETH result.
+    const closingFeeKnown = closingTrade.actualFees !== undefined
+    const closingFeeEstimated = !closingFeeKnown && fallbackFeeStrk !== undefined
+    const closingFeeStrk = closingTrade.actualFees ?? (fallbackFeeStrk ?? BigNumber.from(0))
+    const txFeesEth = closingFeeInEth(trades, closingFeeStrk)
+    return { soldEth, boughtEth, txFeesEth, closingFeeKnown, closingFeeEstimated, failedFeesEth }
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +171,8 @@ export interface MatchedEntry {
     date: Date
     netEth: BigNumber
     tradeCount: number
+    unknownClosingFeeCount: number
+    estimatedClosingFeeCount: number
 }
 
 // combines still-archived groups (from aggregate.ts) with groups still present in the live file
@@ -153,16 +180,21 @@ export interface MatchedEntry {
 export function buildMatchedEntries(transactions: ReportTransaction[], aggregate: AggregateData, fallbackFeeStrk?: BigNumber): MatchedEntry[] {
     const entries: MatchedEntry[] = aggregate.matchedGroups.map(g => ({
         date: new Date(g.toTimestamp),
-        netEth: BigNumber.from(g.boughtEth).sub(g.soldEth).sub(g.txFeesEth).sub(g.failedFeesEth),
-        tradeCount: g.tradeCount
+        netEth: BigNumber.from(g.boughtEth).sub(g.soldEth).sub(
+            g.closingFeeKnown === true || g.closingFeeEstimated === true ? g.txFeesEth : 0),
+        tradeCount: g.tradeCount,
+        unknownClosingFeeCount: g.closingFeeKnown === true || g.closingFeeEstimated === true ? 0 : 1,
+        estimatedClosingFeeCount: g.closingFeeEstimated === true ? 1 : 0
     }))
     const { groups } = getMatchGroups(transactions)
     for (const { trades } of groups) {
-        const { soldEth, boughtEth, txFeesEth, failedFeesEth } = computeMatchGroupTotals(trades, fallbackFeeStrk)
+        const { soldEth, boughtEth, txFeesEth, closingFeeKnown, closingFeeEstimated } = computeMatchGroupTotals(trades, fallbackFeeStrk)
         entries.push({
             date: trades[trades.length - 1].date,
-            netEth: boughtEth.sub(soldEth).sub(txFeesEth).sub(failedFeesEth),
-            tradeCount: trades.length
+            netEth: boughtEth.sub(soldEth).sub(txFeesEth),
+            tradeCount: trades.length,
+            unknownClosingFeeCount: closingFeeKnown || closingFeeEstimated ? 0 : 1,
+            estimatedClosingFeeCount: closingFeeEstimated ? 1 : 0
         })
     }
     return entries.sort((a, b) => a.date.getTime() - b.date.getTime())
@@ -183,6 +215,8 @@ export interface WebTradeEntry {
     buyAmount: string
     actualFees?: string
     netEth?: string
+    closingFeeKnown?: boolean
+    closingFeeEstimated?: boolean
     status: 'open' | 'closed'
     fromTimestamp?: number
     toTimestamp?: number
@@ -207,7 +241,9 @@ export function buildWebTradeEntries(transactions: ReportTransaction[], fallback
                 sellAmount: t.sellAmount.toString(),
                 buyAmount: t.buyAmount.toString(),
                 actualFees: t.actualFees?.toString(),
-                netEth: totals ? totals.boughtEth.sub(totals.soldEth).sub(totals.txFeesEth).sub(totals.failedFeesEth).toString() : undefined,
+                netEth: totals ? totals.boughtEth.sub(totals.soldEth).sub(totals.txFeesEth).toString() : undefined,
+                closingFeeKnown: totals?.closingFeeKnown,
+                closingFeeEstimated: totals?.closingFeeEstimated,
                 status: group ? 'closed' : 'open',
                 fromTimestamp: openers?.length ? openers[0].date.getTime() : undefined,
                 toTimestamp: openers?.length ? openers[openers.length - 1].date.getTime() : undefined,

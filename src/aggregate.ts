@@ -18,6 +18,8 @@ export type MatchedGroupSummary = {
     boughtEth: string,
     txFeesEth: string,
     failedFeesEth: string,
+    closingFeeKnown?: boolean,
+    closingFeeEstimated?: boolean,
 }
 
 export type ExternalTransfer = {
@@ -66,13 +68,22 @@ export async function saveAggregateData(data: AggregateData): Promise<boolean> {
     })
 }
 
-// appends any groups not already recorded (by closingHash), returns how many were added
-export async function appendMatchedGroupSummaries(newGroups: MatchedGroupSummary[]): Promise<number> {
+// inserts new groups and refreshes existing summaries (by closingHash)
+export async function upsertMatchedGroupSummaries(newGroups: MatchedGroupSummary[]): Promise<number> {
     const aggregate = await getAggregateData()
-    const known = new Set(aggregate.matchedGroups.map(g => g.closingHash))
-    const toAdd = newGroups.filter(g => !known.has(g.closingHash))
-    if (!toAdd.length) return 0
-    aggregate.matchedGroups.push(...toAdd)
+    const byClosingHash = new Map(aggregate.matchedGroups.map((group, index) => [group.closingHash, index]))
+    let changed = 0
+    for (const group of newGroups) {
+        const index = byClosingHash.get(group.closingHash)
+        if (index === undefined) {
+            byClosingHash.set(group.closingHash, aggregate.matchedGroups.length)
+            aggregate.matchedGroups.push(group)
+        } else {
+            aggregate.matchedGroups[index] = group
+        }
+        changed++
+    }
+    if (!changed) return 0
     await saveAggregateData(aggregate)
-    return toAdd.length
+    return changed
 }
