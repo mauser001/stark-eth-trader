@@ -135,6 +135,11 @@ header h1 {
   color: #fff;
 }
 
+#trades-table tr.next-goal td {
+  border-top: 2px dashed var(--panel-border);
+  font-style: italic;
+}
+
 .panel-header {
   display: flex;
   align-items: baseline;

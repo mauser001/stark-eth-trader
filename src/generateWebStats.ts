@@ -1,9 +1,10 @@
 import { BigNumber } from "@ethersproject/bignumber";
 import { getTransactionData } from "./transactions";
 import { loadArchivedTransactions } from "./archives";
-import { ReportTransaction, buildBalanceTurningPoints, buildMatchedEntries, buildWebTradeEntries, dayKey, getAverageActualFeesStrk, toReportTransactions } from "./matching";
+import { ReportTransaction, buildBalanceTurningPoints, buildMatchedEntries, buildNextOpenTrade, buildWebProgress, buildWebTradeEntries, dayKey, getAverageActualFeesStrk, toReportTransactions } from "./matching";
 import { getAggregateData } from "./aggregate";
 import { TxData } from "./types";
+import { getBestTx } from "./quote";
 
 const WEBAPP_URL = process.env.WEBAPP_URL
 const WEBAPP_SECRET = process.env.WEBAPP_SECRET
@@ -17,7 +18,9 @@ async function seed() {
     }
     const byHash = new Map<string, TxData>()
     for (const t of loadArchivedTransactions()) byHash.set(t.hash, t)
-    for (const t of await getTransactionData()) byHash.set(t.hash, t)
+    const live = await getTransactionData()
+    for (const t of live) byHash.set(t.hash, t)
+    const liveOpen = live.filter(t => !t.matchedBy)
     const transactions = toReportTransactions(Array.from(byHash.values()))
     if (!transactions.length) {
         console.log('no transactions found')
@@ -52,13 +55,16 @@ async function seed() {
         .sort((a, b) => a.date.localeCompare(b.date))
         .map(d => ({ date: d.date, netEth: d.netEth.toString(), tradeCount: d.tradeCount }))
 
+    const progress = buildWebProgress(transactions)
+    const nextOpen = buildNextOpenTrade(transactions, getBestTx(liveOpen)?.hash, fallbackFeeStrk)
+
     const last = transactions[transactions.length - 1]
     const current = { eth: last.balanceEth.toString(), strk: last.balanceStrk.toString(), timestamp: last.date.getTime(), hash: last.hash }
 
     const res = await fetch(WEBAPP_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Report-Secret': WEBAPP_SECRET },
-        body: JSON.stringify({ seed: { current, balances, trades, dailyMatched, turningPoints } })
+        body: JSON.stringify({ seed: { current, balances, trades, dailyMatched, turningPoints, progress, nextOpen } })
     })
     const text = await res.text().catch(() => '')
     // ingest.php always replies with json - anything else means the request never actually
@@ -70,7 +76,7 @@ async function seed() {
         parsed = undefined
     }
     if (res.ok && parsed?.ok) {
-        console.log(`seeded webapp: ${balances.length} balance point(s), ${trades.length} trade(s), ${dailyMatched.length} daily entrie(s), ${turningPoints.length} turning point(s)`)
+        console.log(`seeded webapp: ${balances.length} balance point(s), ${trades.length} trade(s), ${dailyMatched.length} daily entrie(s), ${turningPoints.length} turning point(s), ${progress.points.length} progress point(s)`)
     } else {
         console.log(`seed failed: ${res.status} ${text}`)
     }

@@ -1,7 +1,9 @@
 import { BigNumber } from "@ethersproject/bignumber";
 import { getTransactionData } from "./transactions";
-import { ReportTransaction, buildBalanceTurningPoints, buildWebTradeEntries, computeMatchGroupTotals, dayKey, getAverageActualFeesStrk, getMatchGroups, openerHashesOf, toReportTransactions } from "./matching";
+import { ReportTransaction, buildBalanceTurningPoints, buildNextOpenTrade, buildWebProgress, buildWebTradeEntries, computeMatchGroupTotals, dayKey, getAverageActualFeesStrk, getMatchGroups, openerHashesOf, toReportTransactions } from "./matching";
+import { loadArchivedTransactions } from "./archives";
 import { TxData } from "./types";
+import { getBestTx } from "./quote";
 
 // ---------------------------------------------------------------------------
 // reports a compact snapshot to the small PHP webapp after every confirmed trade
@@ -73,7 +75,15 @@ export async function reportTradeToWebapp(newTx: TxData): Promise<void> {
         if (!trade) return
         const turningPoints = buildBalanceTurningPoints(transactions).map(p => ({ date: dayKey(p.date.getTime()), direction: p.direction, diffEth: p.diffEth.toString(), diffStrk: p.diffStrk.toString() }))
 
-        await postToWebapp({ current, balancePoint, trade, removeTradeHashes, dailyEntry, turningPoints })
+        // the progress series needs the complete history, the live file alone misses archived trades
+        const byHash = new Map<string, TxData>()
+        for (const t of loadArchivedTransactions()) byHash.set(t.hash, t)
+        for (const t of raw) byHash.set(t.hash, t)
+        const progress = buildWebProgress(toReportTransactions(Array.from(byHash.values())))
+
+        const nextOpen = buildNextOpenTrade(transactions, getBestTx(raw.filter(t => !t.matchedBy))?.hash, fallbackFeeStrk)
+
+        await postToWebapp({ current, balancePoint, trade, removeTradeHashes, dailyEntry, turningPoints, progress, nextOpen })
     } catch (e) {
         console.warn('failed to report trade to webapp: ', e)
     }

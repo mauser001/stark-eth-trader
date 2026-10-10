@@ -63,6 +63,15 @@ function validate_turning_point($p): bool {
         && (!isset($p['diffStrk']) || is_wei_string($p['diffStrk']));
 }
 
+function validate_progress($p): bool {
+    if (!is_array($p) || !is_array($p['points'] ?? null)) return false;
+    if (isset($p['ethPerStrk']) && !is_wei_string($p['ethPerStrk'])) return false;
+    foreach ($p['points'] as $pt) {
+        if (!is_array($pt) || !is_date_string($pt['date'] ?? null) || !is_wei_string($pt['eth'] ?? null) || !is_wei_string($pt['strk'] ?? null)) return false;
+    }
+    return true;
+}
+
 // -----------------------------------------------------------------------
 // full replace: used once for the initial historic seed (and re-seeds)
 // -----------------------------------------------------------------------
@@ -75,6 +84,8 @@ if (isset($body['seed'])) {
     foreach ($seed['trades'] ?? [] as $t) if (!validate_trade($t)) fail(400, 'invalid seed.trades entry');
     foreach ($seed['dailyMatched'] ?? [] as $d) if (!validate_daily_entry($d)) fail(400, 'invalid seed.dailyMatched entry');
     foreach ($seed['turningPoints'] ?? [] as $p) if (!validate_turning_point($p)) fail(400, 'invalid seed.turningPoints entry');
+    if (isset($seed['progress']) && !validate_progress($seed['progress'])) fail(400, 'invalid seed.progress');
+    if (isset($seed['nextOpen']) && !validate_trade($seed['nextOpen'])) fail(400, 'invalid seed.nextOpen');
 
     $balances = array_slice($seed['balances'] ?? [], -MAX_BALANCE_POINTS);
     $trades = array_slice($seed['trades'] ?? [], -MAX_TRADES);
@@ -84,6 +95,8 @@ if (isset($body['seed'])) {
     write_json_file_atomic("$dataDir/trades.json", $trades);
     write_json_file_atomic("$dataDir/daily_matched.json", $seed['dailyMatched'] ?? []);
     write_json_file_atomic("$dataDir/turning_points.json", $seed['turningPoints'] ?? []);
+    if (isset($seed['progress'])) write_json_file_atomic("$dataDir/progress.json", $seed['progress']);
+    write_json_file_atomic("$dataDir/next_open.json", $seed['nextOpen'] ?? null);
 
     echo json_encode(['ok' => true, 'seeded' => true]);
     exit;
@@ -135,6 +148,16 @@ if (isset($body['dailyEntry']) && $body['dailyEntry'] !== null) {
 if (isset($body['turningPoints'])) {
     foreach ($body['turningPoints'] as $p) if (!validate_turning_point($p)) fail(400, 'invalid turningPoints entry');
     write_json_file_atomic("$dataDir/turning_points.json", $body['turningPoints']);
+}
+
+if (isset($body['progress'])) {
+    if (!validate_progress($body['progress'])) fail(400, 'invalid progress');
+    write_json_file_atomic("$dataDir/progress.json", $body['progress']);
+}
+
+if (array_key_exists('nextOpen', $body)) {
+    if ($body['nextOpen'] !== null && !validate_trade($body['nextOpen'])) fail(400, 'invalid nextOpen');
+    write_json_file_atomic("$dataDir/next_open.json", $body['nextOpen']);
 }
 
 echo json_encode(['ok' => true]);

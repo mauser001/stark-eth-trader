@@ -20,4 +20,6 @@ echo json_encode([
     'trades' => read_json_file("$dataDir/trades.json", []),
     'dailyMatched' => read_json_file("$dataDir/daily_matched.json", []),
     'turningPoints' => read_json_file("$dataDir/turning_points.json", []),
+    'progress' => read_json_file("$dataDir/progress.json", ['points' => []]),
+    'nextOpen' => read_json_file("$dataDir/next_open.json", null),
 ]);

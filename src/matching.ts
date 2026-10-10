@@ -252,6 +252,13 @@ export function buildWebTradeEntries(transactions: ReportTransaction[], fallback
         })
 }
 
+// the open trade the bot works on next (picked by getBestTx), as a web entry. The webapp shows it
+// below the last 100 trades when none of those is open, so the current goal is always visible.
+export function buildNextOpenTrade(transactions: ReportTransaction[], bestOpenHash: string | undefined, fallbackFeeStrk?: BigNumber): WebTradeEntry | null {
+    if (!bestOpenHash) return null
+    return buildWebTradeEntries(transactions, fallbackFeeStrk).find(t => t.hash === bestOpenHash && t.status === 'open') ?? null
+}
+
 // hashes of "opener" trades that get absorbed into the given closing group (i.e. every trade in
 // the group except the closer itself) - used to drop them from the webapp's stored trade list
 // when a group closes, since they no longer count as their own open/closed entry
@@ -291,4 +298,119 @@ export function buildBalanceTurningPoints(transactions: ReportTransaction[]): Ba
         }
     }
     return points
+}
+
+// ---------------------------------------------------------------------------
+// shared helper: realized progress per day (raw balances, no fees/conversion) for the
+// console "progress" report and the webapp progress chart
+// ---------------------------------------------------------------------------
+
+export interface ProgressPoint {
+    date: Date
+    realizedEth: BigNumber
+    realizedStrk: BigNumber
+    openEth: BigNumber
+    openStrk: BigNumber
+}
+
+export interface ProgressSeries {
+    days: ProgressPoint[]
+    // balance jumps no trade explains (deposits/withdrawals) that were excluded from the series
+    externalEth: BigNumber
+    externalStrk: BigNumber
+}
+
+const EXTERNAL_ETH = BigNumber.from(10).pow(16)
+const EXTERNAL_STRK = BigNumber.from(100).mul(BigNumber.from(10).pow(18))
+
+// A raw balance snapshot also contains the open (not yet matched) positions: an open eth sell
+// is eth missing and strk surplus, so snapshots taken with a different open inventory can't be
+// compared directly. Subtracting the open positions and external deposits leaves only what
+// closed groups produced. Needs the complete history (live + archived trades).
+export function buildProgressSeries(transactions: ReportTransaction[]): ProgressSeries {
+    const { groups } = getMatchGroups(transactions)
+    const indexByHash = new Map(transactions.map((t, i) => [t.hash, i]))
+    const closesAt = new Map<string, number>()
+    const closingGroups = new Map<number, MatchGroup>()
+    for (const g of groups) {
+        const closeIndex = indexByHash.get(g.trades[g.trades.length - 1].hash)!
+        closingGroups.set(closeIndex, g)
+        g.trades.forEach(t => closesAt.set(t.hash, closeIndex))
+    }
+
+    const effect = (t: ReportTransaction) => t.isSellingEth
+        ? { eth: t.sellAmount.mul(-1), strk: t.buyAmount }
+        : { eth: t.buyAmount, strk: t.sellAmount.mul(-1) }
+
+    let externalEth = BigNumber.from(0)
+    let externalStrk = BigNumber.from(0)
+    let openEth = BigNumber.from(0)
+    let openStrk = BigNumber.from(0)
+    const endOfDay = new Map<string, ProgressPoint>()
+    transactions.forEach((t, i) => {
+        if (i > 0) {
+            const e = effect(t)
+            const prev = transactions[i - 1]
+            const residualEth = t.balanceEth.sub(prev.balanceEth).sub(e.eth)
+            const residualStrk = t.balanceStrk.sub(prev.balanceStrk).sub(e.strk)
+            if (residualEth.abs().gt(EXTERNAL_ETH) || residualStrk.abs().gt(EXTERNAL_STRK)) {
+                externalEth = externalEth.add(residualEth)
+                externalStrk = externalStrk.add(residualStrk)
+            }
+        }
+        const closeIndex = closesAt.get(t.hash)
+        // trades of a group that closes later (or never) are open; the closing trade itself never is
+        if (closeIndex === undefined || closeIndex > i) {
+            const e = effect(t)
+            openEth = openEth.add(e.eth)
+            openStrk = openStrk.add(e.strk)
+        }
+        const closing = closingGroups.get(i)
+        if (closing) {
+            for (const g of closing.trades) {
+                if (g.hash === t.hash) continue
+                const e = effect(g)
+                openEth = openEth.sub(e.eth)
+                openStrk = openStrk.sub(e.strk)
+            }
+        }
+        endOfDay.set(dayKey(t.date.getTime()), {
+            date: t.date,
+            realizedEth: t.balanceEth.sub(openEth).sub(externalEth),
+            realizedStrk: t.balanceStrk.sub(openStrk).sub(externalStrk),
+            openEth,
+            openStrk,
+        })
+    })
+    return { days: Array.from(endOfDay.values()), externalEth, externalStrk }
+}
+
+// current price of 1 strk in eth (scaled 1e18), taken from the latest trade
+export function getEthPerStrk(transactions: ReportTransaction[]): BigNumber | undefined {
+    for (let i = transactions.length - 1; i >= 0; i--) {
+        const t = transactions[i]
+        const eth = t.isSellingEth ? t.sellAmount : t.buyAmount
+        const strk = t.isSellingEth ? t.buyAmount : t.sellAmount
+        if (eth.gt(0) && strk.gt(0)) return eth.mul(BigNumber.from(10).pow(18)).div(strk)
+    }
+    return undefined
+}
+
+export interface WebProgressPoint {
+    date: string
+    // cumulative realized change since the first day, as wei strings
+    eth: string
+    strk: string
+}
+
+export function buildWebProgress(transactions: ReportTransaction[]): { points: WebProgressPoint[], ethPerStrk?: string } {
+    const { days } = buildProgressSeries(transactions)
+    if (!days.length) return { points: [] }
+    const first = days[0]
+    const points = days.map(d => ({
+        date: dayKey(d.date.getTime()),
+        eth: d.realizedEth.sub(first.realizedEth).toString(),
+        strk: d.realizedStrk.sub(first.realizedStrk).toString(),
+    }))
+    return { points, ethPerStrk: getEthPerStrk(transactions)?.toString() }
 }

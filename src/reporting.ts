@@ -4,7 +4,7 @@ import { BigNumber } from "@ethersproject/bignumber";
 import { RATIO_MULTI } from "./conts";
 import { getTxRatio } from "./quote";
 import { TxData } from "./types";
-import { MatchedEntry, ReportTransaction, buildBalanceTurningPoints, buildMatchedEntries, computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
+import { MatchedEntry, ReportTransaction, buildBalanceTurningPoints, buildMatchedEntries, buildProgressSeries, computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
 import { AggregateData, ExternalTransfer, getAggregateData } from "./aggregate";
 import { loadArchivedTransactions } from "./archives";
 
@@ -307,9 +307,9 @@ function reportMatchedByPeriod(entries: MatchedEntry[], periodLabel: (date: Date
             ? ` after ${b.estimatedClosingFeeCount} estimated closing fee(s); ${b.unknownClosingFeeCount} closing fee(s) unknown`
             : b.unknownClosingFeeCount
                 ? ` before ${b.unknownClosingFeeCount} unknown closing fee(s)`
-            : b.estimatedClosingFeeCount
-                ? ` after ${b.estimatedClosingFeeCount} estimated closing fee(s)`
-                : ' after actual closing fees'
+                : b.estimatedClosingFeeCount
+                    ? ` after ${b.estimatedClosingFeeCount} estimated closing fee(s)`
+                    : ' after actual closing fees'
         console.log(`${label} we ${result} ETH${feeStatus} on ${b.tradeCount} trades`)
     }
 }
@@ -379,6 +379,31 @@ function buildBackwardsTransactions(rawTransactions: TxData[]): ReportTransactio
         if (!byHash.has(t.hash)) byHash.set(t.hash, t)
     }
     return toReportTransactions(Array.from(byHash.values()))
+}
+
+// ---------------------------------------------------------------------------
+// report: progress (raw realized balance over time, open positions factored out)
+// ---------------------------------------------------------------------------
+
+const PROGRESS_DAYS = 14
+
+// A raw balance snapshot also contains the open (not yet matched) positions: an open eth sell
+// is eth missing and strk surplus, so snapshots taken with a different open inventory can't be
+// compared directly. Subtracting the open positions leaves only what closed groups produced.
+function reportProgress(transactions: ReportTransaction[]) {
+    console.log('-----------------------Realized progress (raw balances, no fees/conversion)------------------------')
+    const { days, externalEth, externalStrk } = buildProgressSeries(transactions)
+    const recent = days.slice(-PROGRESS_DAYS)
+    let previous = days[days.length - recent.length - 1]
+    for (const d of recent) {
+        const dEth = previous ? d.realizedEth.sub(previous.realizedEth) : BigNumber.from(0)
+        const dStrk = previous ? d.realizedStrk.sub(previous.realizedStrk) : BigNumber.from(0)
+        console.log(`${formatDayMonthYear(d.date)} realized change Eth: ${formatBig8(dEth)} Strk: ${formatBig8(dStrk)} | realized total Eth: ${formatBig8(d.realizedEth)} Strk: ${formatBig8(d.realizedStrk)} | open Eth: ${formatBig8(d.openEth)} Strk: ${formatBig8(d.openStrk)}`)
+        previous = d
+    }
+    const first = days[0]
+    const last = days[days.length - 1]
+    console.log(`Realized since ${formatDayMonthYear(first.date)} Eth: ${formatBig8(last.realizedEth.sub(first.realizedEth))} Strk: ${formatBig8(last.realizedStrk.sub(first.realizedStrk))} (excluding deposits Eth: ${formatBig8(externalEth)} Strk: ${formatBig8(externalStrk)})`)
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +483,7 @@ const reports: Record<string, Report> = {
     'matched-monthly': { description: 'net gain/loss and trade count grouped by closing month (includes archived groups)', run: (t, _raw, agg) => reportMatchedMonthly(t, agg) },
     unmatched: { description: 'latest 10 unmatched trades with amounts and ratios', run: (t) => reportUnmatched(t) },
     backwards: { description: 'balance changes walking backwards from the latest trade (includes archived trades)', run: (_t, raw) => reportBackwards(buildBackwardsTransactions(raw)) },
+    progress: { description: 'raw realized balance per day with open positions factored out (includes archived trades)', run: (_t, raw) => reportProgress(buildBackwardsTransactions(raw)) },
     fees: { description: 'tx fee analytics: actual fees vs avnu/our/max estimates', run: (_t, raw) => reportFees(raw) },
 }
 
