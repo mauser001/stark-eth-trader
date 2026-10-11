@@ -103,8 +103,10 @@ function reportOpen(transactions: ReportTransaction[]) {
     const { matchedHashes } = getMatchGroups(transactions)
     const count = {
         ethSell: 0,
+        ethOpenSellAmount: BigNumber.from(0),
         ethMatched: 0,
         strkSell: 0,
+        strkOpenSellAmount: BigNumber.from(0),
         strkMatched: 0,
     }
     for (const t of transactions) {
@@ -112,16 +114,20 @@ function reportOpen(transactions: ReportTransaction[]) {
         if (t.isSellingEth) {
             count.ethSell++
             if (isMatched) count.ethMatched++
+            else count.ethOpenSellAmount = count.ethOpenSellAmount.add(t.sellAmount)
         } else {
             count.strkSell++
             if (isMatched) count.strkMatched++
+            else count.strkOpenSellAmount = count.strkOpenSellAmount.add(t.sellAmount)
         }
         if (t.isSellingEth && !isMatched) {
             const ratio = t.buyAmount.mul(RATIO_MULTI).div(t.sellAmount)
             console.log(`${formatDayMonth(t.date)}: ratio: ${(ratio.toNumber() / RATIO_MULTI).toFixed(2)} ETH->STRK sell: ${formatBig8(t.sellAmount)} | buy: ${formatBig8(t.buyAmount)}`)
         }
     }
-    console.log(`Tx Count-> Eth: ${count.ethSell} (matched: ${count.ethMatched}) | Strk: ${count.strkSell} (matched: ${count.strkMatched})`)
+    console.log(`Tx Count-> Eth: ${count.ethSell} (open: ${count.ethSell - count.ethMatched}) | Strk: ${count.strkSell} (open: ${count.strkSell - count.strkMatched})`)
+    console.log(`Eth Open sell Amount: ${formatBig8(count.ethOpenSellAmount)}`)
+    console.log(`Strk Open sell Amount: ${formatBig8(count.strkOpenSellAmount)}`)
 }
 
 // rounds to 8 decimal places using BigNumber math (avoids float precision loss)
