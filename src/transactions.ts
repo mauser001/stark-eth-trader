@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { getBalances } from "./balances";
 import { BigNumber } from "@ethersproject/bignumber";
 import { FailedTransactions, TxData } from "./types";
-import { getBestTx } from "./quote";
+import { getBestTx, getFallingKnife } from "./quote";
 import { reportTradeToWebapp } from "./webReport";
 
 const NOT_FOUND = 'NOT_FOUND' as const;
@@ -238,6 +238,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
         tx,
         latest,
         unMatched,
+        fallingKnife: getFallingKnife(transactions),
         maxFee: getMaxTrackedFee(transactions)
     }
 }

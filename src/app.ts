@@ -24,8 +24,8 @@ async function run() {
     const { account, provider } = await getAccount({ chainId, nodeUrl })
 
     // First let's get the latest transactions
-    const { finished, tx, unMatched, latest, maxFee } = await checkTransactions(provider, account)
-    if (!finished || !tx) {
+    const { finished, tx, unMatched, latest, maxFee, fallingKnife } = await checkTransactions(provider, account)
+    if (!finished || !tx || !fallingKnife) {
         return
     }
     if (!latestBlock || latestBlock <= (latest?.block ?? 0) + 1) {
@@ -57,10 +57,15 @@ async function run() {
     const matchRatio = getRatio(strk, eth)
     // Prefer open trades for the ratio; only use the latest trade when no open trades exist.
     const ratioTxs = unMatched.length ? unMatched : [latest]
+    // in a down trend (falling knife) we sell a multiple of SELL_PERCENT in the direction of the open trades
+    const knifeCounter = fallingKnife.counter > 1 ? fallingKnife.counter : undefined
+    const sellPercent = (sell: 'eth' | 'strk') => knifeCounter && fallingKnife.sell === sell ? SELL_PERCENT.mul(knifeCounter) : SELL_PERCENT
+    if (knifeCounter)
+        console.log(`falling knife: counter ${knifeCounter} for selling ${fallingKnife.sell}, sell percent ${sellPercent(fallingKnife.sell!).toString()}`)
 
     // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell a defined percentage
     const isEthMatch = !tx.matchedBy && tx.sell === 'eth'
-    const sellStrk = isEthMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), SELL_PERCENT, MIN_SEL_AMOUNT_STRK)
+    const sellStrk = isEthMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), sellPercent('strk'), MIN_SEL_AMOUNT_STRK)
     const strkRatio = isEthMatch ? matchRatio : getBestRatio('strk', ratioTxs) ?? matchRatio
     let quote: QuoteData | undefined = undefined;
     if (sellStrk)
@@ -70,7 +75,7 @@ async function run() {
     if (!quote?.quote) {
         // if we don't find a good quote for strk we try to get eth for a good price
         const isStrkMatch = !tx.matchedBy && tx.sell === 'strk'
-        const sellEth = isStrkMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), SELL_PERCENT, MIN_SEL_AMOUNT_ETH)
+        const sellEth = isStrkMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), sellPercent('eth'), MIN_SEL_AMOUNT_ETH)
         const ethRatio = isStrkMatch ? matchRatio : getBestRatio('eth', ratioTxs) ?? matchRatio
         if (sellEth)
             quote = await getQuote('eth', sellEth, account, avnuOptions, ethRatio, tx, unMatched, failedFees, maxFee)
@@ -114,7 +119,8 @@ async function run() {
             expectedMaxFees: maxTotalFee.toString(),
             resourceBounds: serializeResourceBounds(estimate.resourceBounds),
             expectedBuyAmount: quote.quote.buyAmount.toString(),
-            estimatedSlippage: quote.quote.estimatedSlippage
+            estimatedSlippage: quote.quote.estimatedSlippage,
+            fallingKnifeCounter: !matchedBy && knifeCounter && quote.sell === fallingKnife.sell ? knifeCounter : undefined
         }
         await addTransaction(newTx, quote.matchedTx)
     }
@@ -124,7 +130,8 @@ function getSellAmount(balance: BigNumber, percentage: BigNumber, minAmount: Big
     if (balance.lt(minAmount))
         return
 
-    const part = BigNumber.from(balance).mul(percentage).div(100)
+    const pct = percentage.gt(100) ? BigNumber.from(100) : percentage
+    const part = BigNumber.from(balance).mul(pct).div(100)
     return part.gt(minAmount) ? part : minAmount
 }
 

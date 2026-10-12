@@ -34,7 +34,9 @@ export type TxData = {
     timestamp?: number,
     block?: number,
     failedFeesIncluded?: string,
-    actualFees?: string
+    actualFees?: string,
+    // falling-knife counter that multiplied SELL_PERCENT for this trade; its counter trade needs TRADE_DIFFERENCE_1000 * this (missing = 1)
+    fallingKnifeCounter?: number
 }
 
 export type QuoteData = {

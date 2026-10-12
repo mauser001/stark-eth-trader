@@ -1,7 +1,7 @@
 import { AvnuOptions, Quote, QuoteRequest, getQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_1000 } from "./conts"
+import { FALLING_KNIFE_TX_COUNT, MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_1000 } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
@@ -9,9 +9,10 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
     // We get the quotes for the amount we want to sell and then check if we make enough profit
     const quotes: Quote[] = await getAvnuQuotes(sell, sellAmount, account.address, avnuOptions)
     let quote: QuoteData | undefined
+    const matchDifference = getMatchTradeDifference([tx])
     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
     quotes.forEach((q) => {
-        const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees, maxTrackedFee, getPriorFees(sell, [tx]))
+        const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees, matchDifference, maxTrackedFee, getPriorFees(sell, [tx]))
         if (data) {
             quote = data
             if (quote.wasMatch) {
@@ -26,6 +27,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
         let newBuyAmount = BigNumber.from("0")
         let priorFees = BigNumber.from("0")
         const matchedTx: string[] = []
+        const matchedTxs: TxData[] = []
         for (let i = unMatched.length - 1; i >= 0; i--) {
             if (quote.quote) break;
             const testTx = unMatched[i]
@@ -41,6 +43,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
                 newBuyAmount = newBuyAmount.add(BigNumber.from(testTx.buyAmount))
                 priorFees = priorFees.add(getPriorFees(sell, [testTx]))
                 matchedTx.push(testTx.hash)
+                matchedTxs.push(testTx)
 
                 if (matchedTx.length > 1) {
                     console.log(`we found ${matchedTx.length} tx to combine`)
@@ -53,9 +56,10 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
                         hash: 'combined'
                     }
                     testRatio = getTxRatio(txSell, newSellAmount, newBuyAmount)
+                    const combinedDifference = getMatchTradeDifference(matchedTxs)
                     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
                     quotes.forEach((q) => {
-                        const data = checkQuote(sell, q, testRatio, combinedTestTx, failedFees, maxTrackedFee, priorFees)
+                        const data = checkQuote(sell, q, testRatio, combinedTestTx, failedFees, combinedDifference, maxTrackedFee, priorFees)
                         if (data?.quote) {
                             quote = { ...data, matchedTx }
                             testRatio = quote.ratio
@@ -76,7 +80,8 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
 }
 
 // check the quote for selling 
-function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData, failedFees: BigNumber, maxTrackedFee?: BigNumber, priorFees: BigNumber = BigNumber.from("0")): QuoteData | undefined {
+// matchDifference is the gain (per mille) needed when this quote would counter trade tx
+function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData, failedFees: BigNumber, matchDifference: BigNumber, maxTrackedFee?: BigNumber, priorFees: BigNumber = BigNumber.from("0")): QuoteData | undefined {
     const buyAmount = BigNumber.from(quote.buyAmount)
     const sellAmount = BigNumber.from(quote.sellAmount)
     // calculate the ratio of the quote
@@ -124,7 +129,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
     let minBuyAmount: BigNumber | undefined
     // if there is an open tx where we sold eth then we compare the quote with it
     if (tx.sellAmount !== undefined && !tx.matchedBy && tx.sell !== sell) {
-        minBuyAmount = checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount, failedFees, priorFees, tradeRatio, quote.estimatedSlippage)
+        minBuyAmount = checkTxGain(sell, BigNumber.from(tx.sellAmount), fixedBuyAmount, failedFees, priorFees, tradeRatio, matchDifference, quote.estimatedSlippage)
         if (minBuyAmount) {
             doTrade = true
             wasMatch = true
@@ -136,7 +141,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
         }
         // If not we compare the ratios 
     } else {
-        minBuyAmount = fixedBuyAmount ? checkNextTradeDifference(sell, fixedBuyAmount, ratio, tradeRatio, quote.estimatedSlippage) : undefined
+        minBuyAmount = fixedBuyAmount ? checkNextTradeDifference(sell, fixedBuyAmount, ratio, tradeRatio, TRADE_DIFFERENCE_1000, quote.estimatedSlippage) : undefined
         if (minBuyAmount) {
             doTrade = true
         } else {
@@ -159,6 +164,24 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
             maxFeesStrk
         }
     }
+}
+
+// falling knife: within the last FALLING_KNIFE_TX_COUNT transactions count the still unmatched trades
+// (they all sell the same token) against the matched trades of the opposite sell direction (the counter trades, i.e. bounces).
+// counter = unmatched - matched; above 1 we are in a down trend and the counter multiplies SELL_PERCENT
+export function getFallingKnife(transactions: TxData[]): { sell?: EthOrStrk, counter: number } {
+    const recent = transactions.slice(-FALLING_KNIFE_TX_COUNT).filter((t) => t.hash !== 'initial' && t.sell)
+    const unMatched = recent.filter((t) => !t.matchedBy)
+    const sell = unMatched[0]?.sell
+    if (!sell) return { counter: 0 }
+    const matched = recent.filter((t) => t.matchedBy && t.sell !== sell).length
+    return { sell, counter: unMatched.length - matched }
+}
+
+// gain (per mille) needed to counter trade the given trades: TRADE_DIFFERENCE_1000 * the highest falling-knife counter among them
+export function getMatchTradeDifference(txs: TxData[]): BigNumber {
+    const counter = Math.max(1, ...txs.map((t) => t.fallingKnifeCounter ?? 1))
+    return TRADE_DIFFERENCE_1000.mul(counter)
 }
 
 export function getTxRatio(sell: EthOrStrk, sellAmount: BigNumber, buyAmount: BigNumber) {
@@ -218,12 +241,12 @@ function addPercentPoint(amount: BigNumber, percent: BigNumber): BigNumber {
 }
 
 // returns the minimum buy amount (including slippage) that keeps this trade profitable, or undefined if the trade isn't good
-function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber, failedFees: BigNumber, priorFees: BigNumber, ratio: BigNumber, slippage = 0.005): BigNumber | undefined {
+function checkTxGain(sell: EthOrStrk, targetAmount: BigNumber, tradeAmount: BigNumber, failedFees: BigNumber, priorFees: BigNumber, ratio: BigNumber, tradeDifference: BigNumber, slippage = 0.005): BigNumber | undefined {
     const ajustedFailedFees = sell === 'eth' || failedFees.eq(BigNumber.from('0')) ? failedFees : applyRatio(ratio, failedFees, undefined)
-    const totalTarget = addPercentPoint(targetAmount, TRADE_DIFFERENCE_1000).add(ajustedFailedFees).add(priorFees)
+    const totalTarget = addPercentPoint(targetAmount, tradeDifference).add(ajustedFailedFees).add(priorFees)
     let isGood = totalTarget.lt(tradeAmount)
     const dif = tradeAmount.mul(1000).div(totalTarget);
-    console.log(`checkTxGain isGood: ${isGood} sell:${sell}, target: ${targetAmount.toString()}, sell percent: ${TRADE_DIFFERENCE_1000}, total target: ${totalTarget.toString()}, with failed fees: ${failedFees.toString()}, ajustedFailedFees: ${ajustedFailedFees.toString()}, prior fees: ${priorFees.toString()}, trade: ${tradeAmount.toString()}, div: ${dif.toString()}%`)
+    console.log(`checkTxGain isGood: ${isGood} sell:${sell}, target: ${targetAmount.toString()}, sell percent: ${tradeDifference}, total target: ${totalTarget.toString()}, with failed fees: ${failedFees.toString()}, ajustedFailedFees: ${ajustedFailedFees.toString()}, prior fees: ${priorFees.toString()}, trade: ${tradeAmount.toString()}, div: ${dif.toString()}%`)
     if (isGood) {
         const withSlippage = addSlippage(totalTarget, slippage)
         isGood = withSlippage.lt(tradeAmount)
@@ -242,17 +265,17 @@ function addSlippage(amount: BigNumber, slippage = 0.01) {
 }
 
 // returns the minimum buy amount (including slippage) that keeps this trade profitable, or undefined if the trade isn't good
-function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRatio: BigNumber, newRatio: BigNumber, slippage = 0.005): BigNumber | undefined {
+function checkNextTradeDifference(sell: EthOrStrk, tradeAmount: BigNumber, oldRatio: BigNumber, newRatio: BigNumber, tradeDifference: BigNumber, slippage = 0.005): BigNumber | undefined {
     let withOldRatio: BigNumber
     if (sell === 'eth') {
         withOldRatio = tradeAmount.mul(oldRatio).div(newRatio)
     } else {
         withOldRatio = tradeAmount.mul(newRatio).div(oldRatio)
     }
-    const totalTarget = addPercentPoint(withOldRatio, TRADE_DIFFERENCE_1000)
+    const totalTarget = addPercentPoint(withOldRatio, tradeDifference)
     let isGood = totalTarget.lt(tradeAmount)
     const dif = tradeAmount.mul(1000).div(totalTarget);
-    console.log(`checkNextTradeDifference isGood: ${isGood} sell:${sell} with old ratio: ${withOldRatio} min percent gain: ${TRADE_DIFFERENCE_1000} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}, div: ${dif.toString()}%`)
+    console.log(`checkNextTradeDifference isGood: ${isGood} sell:${sell} with old ratio: ${withOldRatio} min percent gain: ${tradeDifference} total target: ${totalTarget.toString()} trade: ${tradeAmount.toString()}, div: ${dif.toString()}%`)
     if (isGood) {
         const withSlippage = addSlippage(totalTarget, slippage)
         isGood = withSlippage.lt(tradeAmount)
