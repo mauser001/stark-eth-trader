@@ -1,7 +1,7 @@
 import { AvnuOptions, Quote, QuoteRequest, getQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { FALLING_KNIFE_TX_COUNT, MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_1000 } from "./conts"
+import { FALLING_KNIFE_BUYBACK_CAP, FALLING_KNIFE_MATCH_COUNT, FALLING_KNIFE_TX_COUNT, MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_1000 } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
@@ -167,21 +167,25 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
     }
 }
 
-// falling knife: within the last FALLING_KNIFE_TX_COUNT transactions count the still unmatched trades
-// (they all sell the same token) against the matched trades of the opposite sell direction (the counter trades, i.e. bounces).
-// counter = unmatched - matched; above 1 we are in a down trend and the counter multiplies the TRADE_DIFFERENCE_1000 gap for opening the next trade
+// falling knife: count the still unmatched trades within the last FALLING_KNIFE_TX_COUNT transactions (they all
+// sell the same token), minus the matched trades of the opposite sell direction (the counter trades, i.e. bounces)
+// within the shorter last FALLING_KNIFE_MATCH_COUNT transactions. The short credit window arms the knife quickly
+// again after a busy balanced phase while open trades keep escalating it through a long down trend.
+// counter = unmatched - matched; above 0 we are in a down trend and the opening gap for the next trade in that
+// direction becomes TRADE_DIFFERENCE_1000 * (1 + FALLING_KNIFE_STRENGTH * counter)
 export function getFallingKnife(transactions: TxData[]): { sell?: EthOrStrk, counter: number } {
-    const recent = transactions.slice(-FALLING_KNIFE_TX_COUNT).filter((t) => t.hash !== 'initial' && t.sell)
-    const unMatched = recent.filter((t) => !t.matchedBy)
+    const recent = transactions.filter((t) => t.hash !== 'initial' && t.sell)
+    const unMatched = recent.slice(-FALLING_KNIFE_TX_COUNT).filter((t) => !t.matchedBy)
     const sell = unMatched[0]?.sell
     if (!sell) return { counter: 0 }
-    const matched = recent.filter((t) => t.matchedBy && t.sell !== sell).length
+    const matched = recent.slice(-FALLING_KNIFE_MATCH_COUNT).filter((t) => t.matchedBy && t.sell !== sell).length
     return { sell, counter: unMatched.length - matched }
 }
 
-// gain (per mille) needed to counter trade the given trades: TRADE_DIFFERENCE_1000 * the highest falling-knife counter among them
+// gain (per mille) needed to counter trade the given trades: TRADE_DIFFERENCE_1000 * the highest falling-knife
+// counter among them, capped at FALLING_KNIFE_BUYBACK_CAP (the counter can reach FALLING_KNIFE_TX_COUNT)
 export function getMatchTradeDifference(txs: TxData[]): BigNumber {
-    const counter = Math.max(1, ...txs.map((t) => t.fallingKnifeCounter ?? 1))
+    const counter = Math.max(1, ...txs.map((t) => Math.min(t.fallingKnifeCounter ?? 1, FALLING_KNIFE_BUYBACK_CAP)))
     return TRADE_DIFFERENCE_1000.mul(counter)
 }
 

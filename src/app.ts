@@ -8,7 +8,7 @@ import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
 import { addTransaction, checkTransactions, getBlock, getFailedTransactions } from './transactions';
 import { getEstimatedTotalFee, getMaxTotalFee, getRatio, serializeResourceBounds } from './math';
-import { MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TARGET_ETH_BALANCE, TIP, TRADE_DIFFERENCE_1000 } from './conts';
+import { MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TARGET_ETH_BALANCE, TIP, TRADE_DIFFERENCE_1000, FALLING_KNIFE_STRENGTH } from './conts';
 import { QuoteData, TxData } from './types';
 import { notifyRunSucceeded, restartEthernetAdapterIfNetworkIssue } from './ethernet';
 
@@ -57,9 +57,10 @@ async function run() {
     const matchRatio = getRatio(strk, eth)
     // Prefer open trades for the ratio; only use the latest trade when no open trades exist.
     const ratioTxs = unMatched.length ? unMatched : [latest]
-    // in a down trend (falling knife) a new trade in the direction of the open trades needs a multiple of the TRADE_DIFFERENCE_1000 gap
-    const knifeCounter = fallingKnife.counter > 1 ? fallingKnife.counter : undefined
-    const openDifference = (sell: 'eth' | 'strk') => knifeCounter && fallingKnife.sell === sell ? TRADE_DIFFERENCE_1000.mul(knifeCounter) : TRADE_DIFFERENCE_1000
+    // in a down trend (falling knife) a new trade in the direction of the open trades needs a bigger gap:
+    // TRADE_DIFFERENCE_1000 * (1 + FALLING_KNIFE_STRENGTH * counter)
+    const knifeCounter = fallingKnife.counter > 0 ? fallingKnife.counter : undefined
+    const openDifference = (sell: 'eth' | 'strk') => knifeCounter && fallingKnife.sell === sell ? TRADE_DIFFERENCE_1000.mul(1 + FALLING_KNIFE_STRENGTH * knifeCounter) : TRADE_DIFFERENCE_1000
     if (knifeCounter)
         console.log(`falling knife: counter ${knifeCounter} for selling ${fallingKnife.sell}, open difference ${openDifference(fallingKnife.sell!).toString()}`)
 

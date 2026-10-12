@@ -35,7 +35,7 @@ Used tech / Prerequisites:
 - MIN_SEL_AMOUNT_ETH - min amount of eth to sell (if sell percent is lower we use this amount, if not enough balance in wallet we don't trade)
 - MIN_SEL_AMOUNT_STRK - min amount of strk to sell
 - TRADE_DIFFERENCE_1000 - difference needed for a good trade in 10th of a percent
-- Falling knife (no setting): from the last 10 transactions, `counter = unmatched - matched trades that sell the opposite token of the unmatched ones (the counter trades)`. If it is > 1, a new trade in that direction needs a ratio gap of `TRADE_DIFFERENCE_1000 * counter` (instead of `TRADE_DIFFERENCE_1000`) and stores `fallingKnifeCounter` in the trade file; its counter trade then needs a gain of `TRADE_DIFFERENCE_1000 * fallingKnifeCounter` (combined counter trades use the highest counter of the closed trades, trades without a counter count as 1)
+- Falling knife (no setting): `counter = still-unmatched trades within the last 40 transactions - matched trades within the last 10 transactions that sell the opposite token of the unmatched ones (the counter trades)`. If it is > 0, a new trade in that direction needs a ratio gap of `TRADE_DIFFERENCE_1000 * (1 + 2 * counter)` (instead of `TRADE_DIFFERENCE_1000`) and stores `fallingKnifeCounter` in the trade file; its counter trade then needs a gain of `TRADE_DIFFERENCE_1000 * min(fallingKnifeCounter, 2)` (combined counter trades use the highest counter of the closed trades, trades without a counter count as 1)
 - MIN_GAS_FEES - if gas fees fluctuate use to set min gas for logic
 - NODE_RPC - will be used to replace the default node rpc
 - TRADE_FILE - relative path to the trading data file, make sure it exists and has the initial content:

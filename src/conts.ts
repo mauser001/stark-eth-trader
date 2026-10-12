@@ -3,8 +3,15 @@ import { BigNumber } from "@ethersproject/bignumber"
 export const RATIO_MULTI = 100000
 export const SELL_PERCENT = BigNumber.from(process.env.SELL_PERCENT)
 export const TRADE_DIFFERENCE_1000 = BigNumber.from(process.env.TRADE_DIFFERENCE_1000)
-// number of most recent transactions the falling-knife counter (unmatched - matched of the same direction) is based on
-export const FALLING_KNIFE_TX_COUNT = 10
+// number of most recent transactions the falling-knife counter counts still-unmatched trades over
+export const FALLING_KNIFE_TX_COUNT = 40
+// shorter window for the buy-back credits: matched counter trades only reduce the counter while they are
+// among this many most recent transactions (early trigger, long escalation)
+export const FALLING_KNIFE_MATCH_COUNT = 10
+// gap steps each falling-knife counter point adds to the opening gap: gap = TRADE_DIFFERENCE_1000 * (1 + strength * counter)
+export const FALLING_KNIFE_STRENGTH = 2
+// cap for the stored counter when it raises the buy-back target (TRADE_DIFFERENCE_1000 * min(counter, cap))
+export const FALLING_KNIFE_BUYBACK_CAP = 2
 export const MIN_SEL_AMOUNT_STRK = BigNumber.from(process.env.MIN_SEL_AMOUNT_STRK)
 export const MIN_SEL_AMOUNT_ETH = BigNumber.from(process.env.MIN_SEL_AMOUNT_ETH)
 export const MIN_GAS_FEES = BigNumber.from(process.env.MIN_GAS_FEES || '0')
