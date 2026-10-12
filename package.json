@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "npx tsc",
+    "test": "npm run build && node --test",
     "dev": "npm run build && node --env-file=.env dist/app.js",
     "prod": "npm run build && node --env-file=prod.env dist/app.js",
     "report-prod": "npm run build && node --env-file=prod.env dist/reporting.js",

@@ -204,7 +204,7 @@ function renderTrades(trades, nextOpen) {
     body.innerHTML = '';
     const rows = [...trades].reverse().map(t => ({ t, isNextGoal: false }));
     // none of the shown trades is open: append the open trade the bot works on next
-    if (nextOpen && !trades.some(t => t.status === 'open')) rows.push({ t: nextOpen, isNextGoal: true });
+    if (nextOpen?.status === 'open' && !trades.some(t => t.status === 'open') && !trades.some(t => t.hash === nextOpen.hash)) rows.push({ t: nextOpen, isNextGoal: true });
     for (const { t, isNextGoal } of rows) {
         const tr = document.createElement('tr');
         if (isNextGoal) tr.classList.add('next-goal');
@@ -215,6 +215,10 @@ function renderTrades(trades, nextOpen) {
         const isLoss = t.netEth != null && t.netEth.startsWith('-');
         const sameDay = formatShortDate(t.fromTimestamp) === formatShortDate(t.toTimestamp);
         const range = sameDay ? formatShortDate(t.fromTimestamp) : `${formatShortDate(t.fromTimestamp)} – ${formatShortDate(t.toTimestamp)}`;
+        const counter = t.status === 'closed' ? t.matchedFallingKnifeCounter : t.fallingKnifeCounter;
+        const knifeDetail = Number.isInteger(counter) && counter > 1
+            ? `<span class="status-detail">${t.status === 'closed' ? 'Matched falling knife' : 'Falling knife'}: ${counter}</span>`
+            : '';
         const statusCell = t.status === 'closed'
             ? `<span class="${isLoss ? 'neg' : 'pos'}">${isLoss ? 'Loss' : 'Profit'}</span><span class="status-detail">${t.tradeCount} trade(s) · ${range}</span>`
             : `<span class="status-open">${isNextGoal ? 'Open · next goal' : 'Open'}</span>`;
@@ -224,7 +228,7 @@ function renderTrades(trades, nextOpen) {
             <td>${formatWei(t.sellAmount, 6)}</td>
             <td>${formatWei(t.buyAmount, 6)}</td>
             <td>${t.actualFees ? formatWei(t.actualFees, 6) : '-'}</td>
-            <td>${statusCell}</td>
+            <td>${statusCell}${knifeDetail}</td>
             <td>${netCell}</td>
         `;
         body.appendChild(tr);

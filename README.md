@@ -35,7 +35,7 @@ Used tech / Prerequisites:
 - MIN_SEL_AMOUNT_ETH - min amount of eth to sell (if sell percent is lower we use this amount, if not enough balance in wallet we don't trade)
 - MIN_SEL_AMOUNT_STRK - min amount of strk to sell
 - TRADE_DIFFERENCE_1000 - difference needed for a good trade in 10th of a percent
-- Falling knife (no setting): from the last 10 transactions, `counter = unmatched - matched trades that sell the opposite token of the unmatched ones (the counter trades)`. If it is > 1, a new trade in that direction sells `SELL_PERCENT * counter` (capped at the whole balance) and stores `fallingKnifeCounter` in the trade file; its counter trade then needs a gain of `TRADE_DIFFERENCE_1000 * fallingKnifeCounter` (combined counter trades use the highest counter of the closed trades, trades without a counter count as 1)
+- Falling knife (no setting): from the last 10 transactions, `counter = unmatched - matched trades that sell the opposite token of the unmatched ones (the counter trades)`. If it is > 1, a new trade in that direction needs a ratio gap of `TRADE_DIFFERENCE_1000 * counter` (instead of `TRADE_DIFFERENCE_1000`) and stores `fallingKnifeCounter` in the trade file; its counter trade then needs a gain of `TRADE_DIFFERENCE_1000 * fallingKnifeCounter` (combined counter trades use the highest counter of the closed trades, trades without a counter count as 1)
 - MIN_GAS_FEES - if gas fees fluctuate use to set min gas for logic
 - NODE_RPC - will be used to replace the default node rpc
 - TRADE_FILE - relative path to the trading data file, make sure it exists and has the initial content:
@@ -73,6 +73,10 @@ Run ```script npm run report-prod ``` to get a short summary of your trades
 
 All trade data lives locally in `TRADE_FILE` (plus `FAILED_TRADE_FILE` for failed-tx fees). Since old matched trades get moved out of the live file by `extract-prod`, running totals for those closed positions are kept separately in `AGGREGATE_FILE` so reports still stay accurate - `npm run backfill-aggregate-prod` rebuilds or refreshes archived-group totals from the archives and live file, and `npm run add-transfer-prod -- <ethWei|-> <strkWei|-> [note]` records manual wallet top-ups so they aren't counted as trading profit. Matched-trade P&L compares ETH received with ETH paid, subtracts the closing transaction fee once, and excludes fees from earlier and failed transactions. When an actual closing fee is unavailable, matched reports estimate it using the average recorded STRK fee, capped at 1 STRK, and convert it using the last opening trade's exchange rate; the reports identify estimated and unavailable fees separately.
 
+The `open` (both sell directions) and `unmatched` reports show the applied `fallingKnifeCounter` when greater than 1. The `matched` and `matched-detail` reports show `matchedFallingKnifeCounter`: the highest applied counter among the original trades, excluding the closing trade. This is also saved in aggregate summaries; run `npm run backfill-aggregate-prod` to refresh older summaries from available archives.
+
+Run `npm test` to build and run the reporting/dashboard regression tests (uses temporary fixture files, not live trading data).
+
 ## Cleanup
 
 Run ```script npm extract-prod ``` to to extract already matched trades in ha separate file
@@ -82,6 +86,8 @@ Run ```script npm extract-prod ``` to to extract already matched trades in ha se
 The `webapp/` folder is a small, self-contained PHP + static site (not built by `tsc`) you can deploy to any plain PHP host (e.g. via FTP) to see your stats in a browser: current ETH/STRK balance, a balance-over-time chart, a daily matched-trades chart (net ETH + trade count) and the last 100 trades.
 
 The trader is the only source of truth - after every confirmed trade it POSTs a small snapshot to `webapp/ingest.php` (see `WEBAPP_URL`/`WEBAPP_SECRET` above), which just persists it into small, bounded json files under `webapp/data/`. This never blocks or crashes the trading loop: the local trade file is always saved first, and any reporting failure (offline server, wrong URL, etc.) is only logged as a warning.
+
+The last-100 table shows an open trade's falling-knife counter on the second line of its status cell when greater than 1; closed groups show the highest counter of their original trades. When all 100 entries are closed, the bot's next genuinely unmatched trade is appended as "Open - next goal". Already-matched trades are never treated as open just because their matching partner has been archived. After updating an existing dashboard, re-run `npm run seed-webapp-prod` to refresh stored rows/counters and remove stale matched rows.
 
 To deploy:
 1. Upload the whole `webapp/` folder to your PHP host.

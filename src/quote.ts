@@ -5,14 +5,14 @@ import { FALLING_KNIFE_TX_COUNT, MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_10
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 
-export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched: TxData[] = [], failedFees: BigNumber = BigNumber.from('0'), maxTrackedFee?: BigNumber): Promise<QuoteData | undefined> {
+export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched: TxData[] = [], failedFees: BigNumber = BigNumber.from('0'), maxTrackedFee?: BigNumber, openDifference: BigNumber = TRADE_DIFFERENCE_1000): Promise<QuoteData | undefined> {
     // We get the quotes for the amount we want to sell and then check if we make enough profit
     const quotes: Quote[] = await getAvnuQuotes(sell, sellAmount, account.address, avnuOptions)
     let quote: QuoteData | undefined
     const matchDifference = getMatchTradeDifference([tx])
     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
     quotes.forEach((q) => {
-        const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees, matchDifference, maxTrackedFee, getPriorFees(sell, [tx]))
+        const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees, matchDifference, openDifference, maxTrackedFee, getPriorFees(sell, [tx]))
         if (data) {
             quote = data
             if (quote.wasMatch) {
@@ -59,7 +59,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
                     const combinedDifference = getMatchTradeDifference(matchedTxs)
                     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
                     quotes.forEach((q) => {
-                        const data = checkQuote(sell, q, testRatio, combinedTestTx, failedFees, combinedDifference, maxTrackedFee, priorFees)
+                        const data = checkQuote(sell, q, testRatio, combinedTestTx, failedFees, combinedDifference, openDifference, maxTrackedFee, priorFees)
                         if (data?.quote) {
                             quote = { ...data, matchedTx }
                             testRatio = quote.ratio
@@ -80,8 +80,9 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
 }
 
 // check the quote for selling 
-// matchDifference is the gain (per mille) needed when this quote would counter trade tx
-function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData, failedFees: BigNumber, matchDifference: BigNumber, maxTrackedFee?: BigNumber, priorFees: BigNumber = BigNumber.from("0")): QuoteData | undefined {
+// matchDifference is the gain (per mille) needed when this quote would counter trade tx,
+// openDifference the ratio gap (per mille) needed to open a new trade
+function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData, failedFees: BigNumber, matchDifference: BigNumber, openDifference: BigNumber, maxTrackedFee?: BigNumber, priorFees: BigNumber = BigNumber.from("0")): QuoteData | undefined {
     const buyAmount = BigNumber.from(quote.buyAmount)
     const sellAmount = BigNumber.from(quote.sellAmount)
     // calculate the ratio of the quote
@@ -141,7 +142,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
         }
         // If not we compare the ratios 
     } else {
-        minBuyAmount = fixedBuyAmount ? checkNextTradeDifference(sell, fixedBuyAmount, ratio, tradeRatio, TRADE_DIFFERENCE_1000, quote.estimatedSlippage) : undefined
+        minBuyAmount = fixedBuyAmount ? checkNextTradeDifference(sell, fixedBuyAmount, ratio, tradeRatio, openDifference, quote.estimatedSlippage) : undefined
         if (minBuyAmount) {
             doTrade = true
         } else {
@@ -168,7 +169,7 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
 
 // falling knife: within the last FALLING_KNIFE_TX_COUNT transactions count the still unmatched trades
 // (they all sell the same token) against the matched trades of the opposite sell direction (the counter trades, i.e. bounces).
-// counter = unmatched - matched; above 1 we are in a down trend and the counter multiplies SELL_PERCENT
+// counter = unmatched - matched; above 1 we are in a down trend and the counter multiplies the TRADE_DIFFERENCE_1000 gap for opening the next trade
 export function getFallingKnife(transactions: TxData[]): { sell?: EthOrStrk, counter: number } {
     const recent = transactions.slice(-FALLING_KNIFE_TX_COUNT).filter((t) => t.hash !== 'initial' && t.sell)
     const unMatched = recent.filter((t) => !t.matchedBy)

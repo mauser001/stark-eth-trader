@@ -41,6 +41,9 @@ function validate_trade($t): bool {
     if (isset($t['fromTimestamp']) && !is_timestamp($t['fromTimestamp'])) return false;
     if (isset($t['toTimestamp']) && !is_timestamp($t['toTimestamp'])) return false;
     if (isset($t['tradeCount']) && !is_int($t['tradeCount'])) return false;
+    foreach (['fallingKnifeCounter', 'matchedFallingKnifeCounter'] as $key) {
+        if (isset($t[$key]) && (!is_int($t[$key]) || $t[$key] < 1)) return false;
+    }
     return true;
 }
 
@@ -85,7 +88,7 @@ if (isset($body['seed'])) {
     foreach ($seed['dailyMatched'] ?? [] as $d) if (!validate_daily_entry($d)) fail(400, 'invalid seed.dailyMatched entry');
     foreach ($seed['turningPoints'] ?? [] as $p) if (!validate_turning_point($p)) fail(400, 'invalid seed.turningPoints entry');
     if (isset($seed['progress']) && !validate_progress($seed['progress'])) fail(400, 'invalid seed.progress');
-    if (isset($seed['nextOpen']) && !validate_trade($seed['nextOpen'])) fail(400, 'invalid seed.nextOpen');
+    if (isset($seed['nextOpen']) && (!validate_trade($seed['nextOpen']) || $seed['nextOpen']['status'] !== 'open')) fail(400, 'invalid seed.nextOpen');
 
     $balances = array_slice($seed['balances'] ?? [], -MAX_BALANCE_POINTS);
     $trades = array_slice($seed['trades'] ?? [], -MAX_TRADES);
@@ -156,7 +159,7 @@ if (isset($body['progress'])) {
 }
 
 if (array_key_exists('nextOpen', $body)) {
-    if ($body['nextOpen'] !== null && !validate_trade($body['nextOpen'])) fail(400, 'invalid nextOpen');
+    if ($body['nextOpen'] !== null && (!validate_trade($body['nextOpen']) || $body['nextOpen']['status'] !== 'open')) fail(400, 'invalid nextOpen');
     write_json_file_atomic("$dataDir/next_open.json", $body['nextOpen']);
 }
 

@@ -47,6 +47,7 @@ async function backfill() {
             failedFeesEth: totals.failedFeesEth.toString(),
             closingFeeKnown: totals.closingFeeKnown,
             closingFeeEstimated: totals.closingFeeEstimated,
+            matchedFallingKnifeCounter: totals.matchedFallingKnifeCounter,
         }
     })
     const recorded = await upsertMatchedGroupSummaries(summaries)

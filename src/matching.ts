@@ -17,6 +17,7 @@ export interface ReportTransaction {
     balanceEth: BigNumber,
     balanceStrk: BigNumber,
     matchedBy?: string
+    fallingKnifeCounter?: number
 }
 
 export function toReportTransactions(rawTransactions: TxData[]): ReportTransaction[] {
@@ -32,7 +33,8 @@ export function toReportTransactions(rawTransactions: TxData[]): ReportTransacti
             failedFeesIncluded: t.failedFeesIncluded ? BigNumber.from(t.failedFeesIncluded) : undefined,
             balanceEth: BigNumber.from(t.balanceEth),
             balanceStrk: BigNumber.from(t.balanceStrk),
-            matchedBy: t.matchedBy
+            matchedBy: t.matchedBy,
+            fallingKnifeCounter: t.fallingKnifeCounter
         }))
         .sort((a, b) => a.date.getTime() - b.date.getTime())
 }
@@ -136,6 +138,12 @@ export interface MatchGroupTotals {
     closingFeeEstimated: boolean
     // Kept for diagnostics/archive data, but excluded from matched P&L.
     failedFeesEth: BigNumber
+    matchedFallingKnifeCounter?: number
+}
+
+export function getMatchedFallingKnifeCounter(trades: ReportTransaction[]): number | undefined {
+    const counter = Math.max(1, ...trades.slice(0, -1).map(t => t.fallingKnifeCounter ?? 1))
+    return counter > 1 ? counter : undefined
 }
 
 export function computeMatchGroupTotals(trades: ReportTransaction[], fallbackFeeStrk?: BigNumber): MatchGroupTotals {
@@ -154,7 +162,8 @@ export function computeMatchGroupTotals(trades: ReportTransaction[], fallbackFee
     const closingFeeEstimated = !closingFeeKnown && fallbackFeeStrk !== undefined
     const closingFeeStrk = closingTrade.actualFees ?? (fallbackFeeStrk ?? BigNumber.from(0))
     const txFeesEth = closingFeeInEth(trades, closingFeeStrk)
-    return { soldEth, boughtEth, txFeesEth, closingFeeKnown, closingFeeEstimated, failedFeesEth }
+    return { soldEth, boughtEth, txFeesEth, closingFeeKnown, closingFeeEstimated, failedFeesEth,
+        matchedFallingKnifeCounter: getMatchedFallingKnifeCounter(trades) }
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +230,8 @@ export interface WebTradeEntry {
     fromTimestamp?: number
     toTimestamp?: number
     tradeCount?: number
+    fallingKnifeCounter?: number
+    matchedFallingKnifeCounter?: number
 }
 
 export function buildWebTradeEntries(transactions: ReportTransaction[], fallbackFeeStrk?: BigNumber): WebTradeEntry[] {
@@ -228,7 +239,7 @@ export function buildWebTradeEntries(transactions: ReportTransaction[], fallback
     const groupByClosingHash = new Map(groups.map(g => [g.hash, g]))
 
     return transactions
-        .filter(t => !matchedHashes.has(t.hash) || groupByClosingHash.has(t.hash))
+        .filter(t => groupByClosingHash.has(t.hash) || (t.hash !== 'initial' && !t.matchedBy && !matchedHashes.has(t.hash)))
         .map(t => {
             const group = groupByClosingHash.get(t.hash)
             const totals = group ? computeMatchGroupTotals(group.trades, fallbackFeeStrk) : undefined
@@ -244,11 +255,13 @@ export function buildWebTradeEntries(transactions: ReportTransaction[], fallback
                 netEth: totals ? totals.boughtEth.sub(totals.soldEth).sub(totals.txFeesEth).toString() : undefined,
                 closingFeeKnown: totals?.closingFeeKnown,
                 closingFeeEstimated: totals?.closingFeeEstimated,
+                fallingKnifeCounter: group ? undefined : t.fallingKnifeCounter,
+                matchedFallingKnifeCounter: totals?.matchedFallingKnifeCounter,
                 status: group ? 'closed' : 'open',
                 fromTimestamp: openers?.length ? openers[0].date.getTime() : undefined,
                 toTimestamp: openers?.length ? openers[openers.length - 1].date.getTime() : undefined,
                 tradeCount: openers ? openers.length : undefined
-            } as WebTradeEntry
+            } satisfies WebTradeEntry
         })
 }
 

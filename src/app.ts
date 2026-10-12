@@ -8,7 +8,7 @@ import { BigNumber } from '@ethersproject/bignumber';
 import { getAccount } from './account';
 import { addTransaction, checkTransactions, getBlock, getFailedTransactions } from './transactions';
 import { getEstimatedTotalFee, getMaxTotalFee, getRatio, serializeResourceBounds } from './math';
-import { MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TARGET_ETH_BALANCE, TIP } from './conts';
+import { MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TARGET_ETH_BALANCE, TIP, TRADE_DIFFERENCE_1000 } from './conts';
 import { QuoteData, TxData } from './types';
 import { notifyRunSucceeded, restartEthernetAdapterIfNetworkIssue } from './ethernet';
 
@@ -57,28 +57,28 @@ async function run() {
     const matchRatio = getRatio(strk, eth)
     // Prefer open trades for the ratio; only use the latest trade when no open trades exist.
     const ratioTxs = unMatched.length ? unMatched : [latest]
-    // in a down trend (falling knife) we sell a multiple of SELL_PERCENT in the direction of the open trades
+    // in a down trend (falling knife) a new trade in the direction of the open trades needs a multiple of the TRADE_DIFFERENCE_1000 gap
     const knifeCounter = fallingKnife.counter > 1 ? fallingKnife.counter : undefined
-    const sellPercent = (sell: 'eth' | 'strk') => knifeCounter && fallingKnife.sell === sell ? SELL_PERCENT.mul(knifeCounter) : SELL_PERCENT
+    const openDifference = (sell: 'eth' | 'strk') => knifeCounter && fallingKnife.sell === sell ? TRADE_DIFFERENCE_1000.mul(knifeCounter) : TRADE_DIFFERENCE_1000
     if (knifeCounter)
-        console.log(`falling knife: counter ${knifeCounter} for selling ${fallingKnife.sell}, sell percent ${sellPercent(fallingKnife.sell!).toString()}`)
+        console.log(`falling knife: counter ${knifeCounter} for selling ${fallingKnife.sell}, open difference ${openDifference(fallingKnife.sell!).toString()}`)
 
     // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell a defined percentage
     const isEthMatch = !tx.matchedBy && tx.sell === 'eth'
-    const sellStrk = isEthMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), sellPercent('strk'), MIN_SEL_AMOUNT_STRK)
+    const sellStrk = isEthMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceStrk), SELL_PERCENT, MIN_SEL_AMOUNT_STRK)
     const strkRatio = isEthMatch ? matchRatio : getBestRatio('strk', ratioTxs) ?? matchRatio
     let quote: QuoteData | undefined = undefined;
     if (sellStrk)
-        quote = await getQuote('strk', sellStrk, account, avnuOptions, strkRatio, tx, unMatched, failedFees, maxFee)
+        quote = await getQuote('strk', sellStrk, account, avnuOptions, strkRatio, tx, unMatched, failedFees, maxFee, openDifference('strk'))
     else
         console.log('Not enough strk balance: ', latest.balanceStrk)
     if (!quote?.quote) {
         // if we don't find a good quote for strk we try to get eth for a good price
         const isStrkMatch = !tx.matchedBy && tx.sell === 'strk'
-        const sellEth = isStrkMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), sellPercent('eth'), MIN_SEL_AMOUNT_ETH)
+        const sellEth = isStrkMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), SELL_PERCENT, MIN_SEL_AMOUNT_ETH)
         const ethRatio = isStrkMatch ? matchRatio : getBestRatio('eth', ratioTxs) ?? matchRatio
         if (sellEth)
-            quote = await getQuote('eth', sellEth, account, avnuOptions, ethRatio, tx, unMatched, failedFees, maxFee)
+            quote = await getQuote('eth', sellEth, account, avnuOptions, ethRatio, tx, unMatched, failedFees, maxFee, openDifference('eth'))
         else
             console.log('Not enough ethe balance: ', latest.balanceStrk)
     }

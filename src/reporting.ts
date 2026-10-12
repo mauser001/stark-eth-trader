@@ -31,6 +31,10 @@ function formatPercent(permille?: BigNumber): string {
     return `${(permille.toNumber() / 10).toFixed(1)}%`
 }
 
+function knifeNote(counter?: number, matched = false): string {
+    return counter && counter > 1 ? ` | ${matched ? 'matched ' : ''}fallingKnifeCounter: ${counter}` : ''
+}
+
 // ---------------------------------------------------------------------------
 // report: overview (balances and gain/loss in eth terms)
 // ---------------------------------------------------------------------------
@@ -120,9 +124,10 @@ function reportOpen(transactions: ReportTransaction[]) {
             if (isMatched) count.strkMatched++
             else count.strkOpenSellAmount = count.strkOpenSellAmount.add(t.sellAmount)
         }
-        if (t.isSellingEth && !isMatched) {
-            const ratio = t.buyAmount.mul(RATIO_MULTI).div(t.sellAmount)
-            console.log(`${formatDayMonth(t.date)}: ratio: ${(ratio.toNumber() / RATIO_MULTI).toFixed(2)} ETH->STRK sell: ${formatBig8(t.sellAmount)} | buy: ${formatBig8(t.buyAmount)}`)
+        if (!isMatched && t.hash !== 'initial') {
+            const ratio = getTxRatio(t.isSellingEth ? 'eth' : 'strk', t.sellAmount, t.buyAmount)
+            const direction = t.isSellingEth ? 'ETH->STRK' : 'STRK->ETH'
+            console.log(`${formatDayMonth(t.date)}: ratio: ${(ratio.toNumber() / RATIO_MULTI).toFixed(2)} ${direction} sell: ${formatBig8(t.sellAmount)} | buy: ${formatBig8(t.buyAmount)}${knifeNote(t.fallingKnifeCounter)}`)
         }
     }
     console.log(`Tx Count-> Eth: ${count.ethSell} (open: ${count.ethSell - count.ethMatched}) | Strk: ${count.strkSell} (open: ${count.strkSell - count.strkMatched})`)
@@ -198,17 +203,18 @@ function reportMatched(transactions: ReportTransaction[], aggregate: AggregateDa
     const filledFromArchive = [...aggregate.matchedGroups]
         .sort((a, b) => b.toTimestamp - a.toTimestamp)
         .slice(0, missing)
-    const displayEntries: { date: Date, label: string, netEth: BigNumber, closingFeeKnown: boolean, closingFeeEstimated: boolean }[] = filledFromArchive.map(g => ({
+    const displayEntries: { date: Date, label: string, netEth: BigNumber, closingFeeKnown: boolean, closingFeeEstimated: boolean, matchedFallingKnifeCounter?: number }[] = filledFromArchive.map(g => ({
         date: new Date(g.toTimestamp),
         label: `matched ${g.tradeCount - 1} tx (archived)`,
         netEth: BigNumber.from(g.boughtEth).sub(g.soldEth).sub(
             g.closingFeeKnown === true || g.closingFeeEstimated === true ? g.txFeesEth : 0),
         closingFeeKnown: g.closingFeeKnown === true,
-        closingFeeEstimated: g.closingFeeEstimated === true
+        closingFeeEstimated: g.closingFeeEstimated === true,
+        matchedFallingKnifeCounter: g.matchedFallingKnifeCounter
     }))
 
     for (const { trades } of groups) {
-        const { soldEth, boughtEth, txFeesEth, failedFeesEth, closingFeeKnown, closingFeeEstimated } = computeMatchGroupTotals(trades, fallbackFeeStrk)
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth, closingFeeKnown, closingFeeEstimated, matchedFallingKnifeCounter } = computeMatchGroupTotals(trades, fallbackFeeStrk)
         totalSoldEth = totalSoldEth.add(soldEth)
         totalBoughtEth = totalBoughtEth.add(boughtEth)
         totalTxFeesEth = totalTxFeesEth.add(txFeesEth)
@@ -216,12 +222,12 @@ function reportMatched(transactions: ReportTransaction[], aggregate: AggregateDa
         if (closingFeeEstimated) estimatedClosingFeeCount++
         else if (!closingFeeKnown) unknownClosingFeeCount++
         const netEth = boughtEth.sub(soldEth).sub(txFeesEth)
-        displayEntries.push({ date: trades[trades.length - 1].date, label: groupDateLabel(trades), netEth, closingFeeKnown, closingFeeEstimated })
+        displayEntries.push({ date: trades[trades.length - 1].date, label: groupDateLabel(trades), netEth, closingFeeKnown, closingFeeEstimated, matchedFallingKnifeCounter })
     }
 
-    for (const { date, label, netEth, closingFeeKnown, closingFeeEstimated } of displayEntries.sort((a, b) => a.date.getTime() - b.date.getTime())) {
+    for (const { date, label, netEth, closingFeeKnown, closingFeeEstimated, matchedFallingKnifeCounter } of displayEntries.sort((a, b) => a.date.getTime() - b.date.getTime())) {
         const closingDate = formatDayMonth(date)
-        const feeNote = closingFeeEstimated ? ' after estimated closing fee' : closingFeeKnown ? '' : ' before unknown closing fee'
+        const feeNote = (closingFeeEstimated ? ' after estimated closing fee' : closingFeeKnown ? '' : ' before unknown closing fee') + knifeNote(matchedFallingKnifeCounter, true)
         if (netEth.isNegative()) {
             console.warn(`${closingDate}: ${label}: We lost ${formatBig8(netEth.abs())} Eth${feeNote}`)
         } else {
@@ -255,7 +261,7 @@ function reportMatchedDetail(transactions: ReportTransaction[], aggregate: Aggre
         console.log(`(including ${archived.groupCount} archived group(s) from previous extractMatched runs, totals only)`)
     }
     for (const { hash, trades } of groups) {
-        const { soldEth, boughtEth, txFeesEth, failedFeesEth, closingFeeKnown, closingFeeEstimated } = computeMatchGroupTotals(trades, fallbackFeeStrk)
+        const { soldEth, boughtEth, txFeesEth, failedFeesEth, closingFeeKnown, closingFeeEstimated, matchedFallingKnifeCounter } = computeMatchGroupTotals(trades, fallbackFeeStrk)
         totalSoldEth = totalSoldEth.add(soldEth)
         totalBoughtEth = totalBoughtEth.add(boughtEth)
         totalTxFeesEth = totalTxFeesEth.add(txFeesEth)
@@ -263,11 +269,11 @@ function reportMatchedDetail(transactions: ReportTransaction[], aggregate: Aggre
         if (closingFeeEstimated) estimatedClosingFeeCount++
         else if (!closingFeeKnown) unknownClosingFeeCount++
         const netEth = boughtEth.sub(soldEth).sub(txFeesEth)
-        const feeNote = closingFeeEstimated
+        const feeNote = (closingFeeEstimated
             ? `${formatBig8(txFeesEth)} Eth estimated closing tx fee`
             : closingFeeKnown
                 ? `${formatBig8(txFeesEth)} Eth actual closing tx fee`
-                : 'closing tx fee unknown'
+                : 'closing tx fee unknown') + knifeNote(matchedFallingKnifeCounter, true)
         if (netEth.isNegative()) {
             console.warn(`We lost ${formatBig8(netEth.abs())} Eth after ${feeNote} (failed tx fees excluded), closing tx: ${hash}`)
         } else {
@@ -338,7 +344,8 @@ function reportMatchedMonthly(transactions: ReportTransaction[], aggregate: Aggr
 
 function reportUnmatched(transactions: ReportTransaction[]) {
     console.log('-----------------------Latest unmatched trades------------------------');
-    const unmatched = transactions.filter(t => !t.matchedBy)
+    const { matchedHashes } = getMatchGroups(transactions)
+    const unmatched = transactions.filter(t => t.hash !== 'initial' && !t.matchedBy && !matchedHashes.has(t.hash))
     const latest = unmatched.slice(-10)
     if (!latest.length) {
         console.log('no unmatched trades')
@@ -348,7 +355,7 @@ function reportUnmatched(transactions: ReportTransaction[]) {
         const sell = t.isSellingEth ? 'eth' : 'strk'
         const ratio = getTxRatio(sell, t.sellAmount, t.buyAmount)
         const direction = t.isSellingEth ? 'ETH->STRK' : 'STRK->ETH'
-        console.log(`${formatDayMonth(t.date)}: ratio: ${(ratio.toNumber() / RATIO_MULTI).toFixed(2)} ${direction} sell: ${formatBig8(t.sellAmount)} | buy: ${formatBig8(t.buyAmount)}`)
+        console.log(`${formatDayMonth(t.date)}: ratio: ${(ratio.toNumber() / RATIO_MULTI).toFixed(2)} ${direction} sell: ${formatBig8(t.sellAmount)} | buy: ${formatBig8(t.buyAmount)}${knifeNote(t.fallingKnifeCounter)}`)
     }
     console.log(`${unmatched.length} unmatched trade(s) total, showing latest ${latest.length}`)
 }

@@ -35,7 +35,7 @@ export type TxData = {
     block?: number,
     failedFeesIncluded?: string,
     actualFees?: string,
-    // falling-knife counter that multiplied SELL_PERCENT for this trade; its counter trade needs TRADE_DIFFERENCE_1000 * this (missing = 1)
+    // falling-knife counter that multiplied the TRADE_DIFFERENCE_1000 opening gap for this trade; its counter trade needs TRADE_DIFFERENCE_1000 * this (missing = 1)
     fallingKnifeCounter?: number
 }
 

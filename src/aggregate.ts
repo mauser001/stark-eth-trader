@@ -20,6 +20,7 @@ export type MatchedGroupSummary = {
     failedFeesEth: string,
     closingFeeKnown?: boolean,
     closingFeeEstimated?: boolean,
+    matchedFallingKnifeCounter?: number,
 }
 
 export type ExternalTransfer = {
