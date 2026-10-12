@@ -2,14 +2,16 @@ import { DATA_PATH, getTransactionData, saveTransactionData } from "./transactio
 import { computeMatchGroupTotals, getAverageActualFeesStrk, getMatchGroups, toReportTransactions } from "./matching";
 import { upsertMatchedGroupSummaries, MatchedGroupSummary } from "./aggregate";
 import { TxData } from "./types";
+import { TREND_GAP_HISTORY_DAYS } from "./conts";
 
 // before we physically remove the matched (opener) trades, summarize the full match groups
 // (opener trades + still-present closing trade) into the aggregate file so report totals stay
 // correct even after the opener trades are gone. Groups already recorded (by closing tx hash)
-// are skipped, so re-running this is safe.
-async function archiveMatchGroups(transactions: TxData[]) {
+// are skipped, so re-running this is safe. Only groups that get extracted (closed before cutoff) are summarized,
+// recent groups stay in the trade file and are counted from there by the report.
+async function archiveMatchGroups(transactions: TxData[], cutoff: number) {
     const reportTransactions = toReportTransactions(transactions)
-    const { groups } = getMatchGroups(reportTransactions)
+    const groups = getMatchGroups(reportTransactions).groups.filter(({ trades }) => trades[trades.length - 1].date.getTime() < cutoff)
     const fallbackFeeStrk = getAverageActualFeesStrk(reportTransactions)
     const summaries: MatchedGroupSummary[] = groups.map(({ trades }) => {
         const totals = computeMatchGroupTotals(trades, fallbackFeeStrk)
@@ -37,14 +39,19 @@ async function extractMatched() {
         console.log('no transaction done')
     }
 
-    await archiveMatchGroups(transactions)
+    // recent trades stay in the trade file (trend gap and falling knife history). A matched trade is only
+    // extracted when its closing trade is old as well, so match groups are always extracted completely
+    const cutoff = Date.now() - TREND_GAP_HISTORY_DAYS * 24 * 60 * 60 * 1000
+    await archiveMatchGroups(transactions, cutoff)
 
     const matched = []
     const unmatched = []
     const first = transactions.splice(0, 1)[0]
+    const timestamps = new Map(transactions.map((t) => [t.hash, t.timestamp]))
+    const isOld = (t: TxData) => Math.max(t.timestamp ?? 0, timestamps.get(t.matchedBy) ?? 0) < cutoff
 
     transactions.forEach((t, index) => {
-        if (t.matchedBy) {
+        if (t.matchedBy && isOld(t)) {
             matched.push(t)
             // if the last transaction is matched we still want to keep it for the last balance
             if (index === transactions.length - 1) {

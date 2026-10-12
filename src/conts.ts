@@ -22,6 +22,8 @@ export const TREND_GAP_MOVE_1000 = 100
 export const TREND_GAP_VOL_K = 4
 export const TREND_GAP_VOL_DAYS = 30
 export const TREND_GAP_MAX_MULT = 6
+// trades of this many days are needed for the trend gap, extract-prod keeps them in the trade file
+export const TREND_GAP_HISTORY_DAYS = Math.max(TREND_GAP_DAYS, TREND_GAP_VOL_DAYS) + 7
 export const MIN_SEL_AMOUNT_STRK = BigNumber.from(process.env.MIN_SEL_AMOUNT_STRK)
 export const MIN_SEL_AMOUNT_ETH = BigNumber.from(process.env.MIN_SEL_AMOUNT_ETH)
 export const MIN_GAS_FEES = BigNumber.from(process.env.MIN_GAS_FEES || '0')
