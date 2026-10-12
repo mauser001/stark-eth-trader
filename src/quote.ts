@@ -1,18 +1,28 @@
 import { AvnuOptions, Quote, QuoteRequest, getQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { FALLING_KNIFE_BUYBACK_CAP, FALLING_KNIFE_MATCH_COUNT, FALLING_KNIFE_TX_COUNT, MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_1000 } from "./conts"
+import { FALLING_KNIFE_BUYBACK_CAP, FALLING_KNIFE_MATCH_COUNT, FALLING_KNIFE_TX_COUNT, MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_1000, TREND_GAP_MOVE_1000 } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
+import { applyTrendGap, TrendGap } from "./trendGap"
 
-export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched: TxData[] = [], failedFees: BigNumber = BigNumber.from('0'), maxTrackedFee?: BigNumber, openDifference: BigNumber = TRADE_DIFFERENCE_1000): Promise<QuoteData | undefined> {
+// opening gap for a quote: the trend gap compares the quote's market ratio (before our fee deduction) with the trend reference
+function getOpenDifference(sell: EthOrStrk, quote: Quote, openDifference: BigNumber, trendGap?: TrendGap): BigNumber {
+    const quoteRatio = getTxRatio(sell, BigNumber.from(quote.sellAmount), BigNumber.from(quote.buyAmount))
+    const { difference, move } = applyTrendGap(sell, openDifference, trendGap, quoteRatio, TREND_GAP_MOVE_1000 / 1000)
+    if (move !== undefined && !difference.eq(openDifference))
+        console.log(`trend gap: ratio moved ${((Math.exp(move) - 1) * 100).toFixed(1)}% vs reference ${trendGap?.refRatio.toFixed(0)}, open difference for selling ${sell}: ${openDifference.toString()} -> ${difference.toString()}`)
+    return difference
+}
+
+export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched: TxData[] = [], failedFees: BigNumber = BigNumber.from('0'), maxTrackedFee?: BigNumber, openDifference: BigNumber = TRADE_DIFFERENCE_1000, trendGap?: TrendGap): Promise<QuoteData | undefined> {
     // We get the quotes for the amount we want to sell and then check if we make enough profit
     const quotes: Quote[] = await getAvnuQuotes(sell, sellAmount, account.address, avnuOptions)
     let quote: QuoteData | undefined
     const matchDifference = getMatchTradeDifference([tx])
     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
     quotes.forEach((q) => {
-        const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees, matchDifference, openDifference, maxTrackedFee, getPriorFees(sell, [tx]))
+        const data = checkQuote(sell, q, quote?.ratio || ratio, tx, failedFees, matchDifference, getOpenDifference(sell, q, openDifference, trendGap), maxTrackedFee, getPriorFees(sell, [tx]))
         if (data) {
             quote = data
             if (quote.wasMatch) {
@@ -59,7 +69,7 @@ export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: 
                     const combinedDifference = getMatchTradeDifference(matchedTxs)
                     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them
                     quotes.forEach((q) => {
-                        const data = checkQuote(sell, q, testRatio, combinedTestTx, failedFees, combinedDifference, openDifference, maxTrackedFee, priorFees)
+                        const data = checkQuote(sell, q, testRatio, combinedTestTx, failedFees, combinedDifference, getOpenDifference(sell, q, openDifference, trendGap), maxTrackedFee, priorFees)
                         if (data?.quote) {
                             quote = { ...data, matchedTx }
                             testRatio = quote.ratio

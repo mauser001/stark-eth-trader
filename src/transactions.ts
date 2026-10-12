@@ -5,6 +5,9 @@ import { BigNumber } from "@ethersproject/bignumber";
 import { FailedTransactions, TxData } from "./types";
 import { getBestTx, getFallingKnife } from "./quote";
 import { reportTradeToWebapp } from "./webReport";
+import { getTrendGap, mergeRatioPoints, pruneRatioPoints, RatioPoint, toRatioPoints, TrendGap } from "./trendGap";
+import { TRADE_DIFFERENCE_1000, TREND_GAP_DAYS, TREND_GAP_MAX_MULT, TREND_GAP_MOVE_1000, TREND_GAP_VOL_DAYS, TREND_GAP_VOL_K } from "./conts";
+import path from 'node:path';
 
 const NOT_FOUND = 'NOT_FOUND' as const;
 
@@ -126,6 +129,37 @@ export async function getTransactionData(): Promise<TxData[]> {
     return await readFile<TxData[]>(DATA_PATH || '')
 }
 
+const RATIO_PATH = process.env.TREND_RATIO_FILE || (DATA_PATH ? DATA_PATH.replace(/\.json$/, '_ratios.json') : '')
+
+// first run: seed the ratio history from the trade file and the archived matched trades (extractMatched output)
+function seedRatioHistory(): RatioPoint[] {
+    if (!DATA_PATH) return []
+    const dir = path.dirname(DATA_PATH)
+    const prefix = path.basename(DATA_PATH).replace(/\.json$/, '_matched_')
+    const lists = fs.readdirSync(dir)
+        .filter((f) => f.startsWith(prefix) && f.endsWith('.json'))
+        .map((f) => toRatioPoints(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))))
+    return mergeRatioPoints(...lists)
+}
+
+// keeps the ratio history of our trades up to date and returns the current trend gap (undefined = not active / not enough data)
+export async function getTrendGapFromHistory(transactions: TxData[]): Promise<TrendGap | undefined> {
+    if (TREND_GAP_DAYS <= 0 || !RATIO_PATH) return
+    const now = Date.now()
+    const stored: RatioPoint[] = fs.existsSync(RATIO_PATH) ? (await readFile<RatioPoint[] | undefined>(RATIO_PATH, true) ?? []) : seedRatioHistory()
+    const points = pruneRatioPoints(mergeRatioPoints(stored, toRatioPoints(transactions)), now, Math.max(TREND_GAP_DAYS, TREND_GAP_VOL_DAYS) + 7)
+    if (!fs.existsSync(RATIO_PATH) || points.length !== stored.length || points.some((p, i) => p.hash !== stored[i].hash))
+        await saveFile(points, RATIO_PATH)
+    return getTrendGap(points, now, {
+        days: TREND_GAP_DAYS,
+        move: TREND_GAP_MOVE_1000 / 1000,
+        volK: TREND_GAP_VOL_K,
+        volDays: TREND_GAP_VOL_DAYS,
+        maxMult: TREND_GAP_MAX_MULT,
+        baseDifference: TRADE_DIFFERENCE_1000.toNumber() / 1000
+    })
+}
+
 export async function addTransaction(tx: TxData, matchedTx?: string[]) {
     const transactions = await getTransactionData()
     transactions.forEach((t) => {
@@ -232,6 +266,12 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
         // falling back to the latest tx if nothing is open
         tx = getBestTx(unMatched) ?? transactions[transactions.length - 1]
     }
+    let trendGap: TrendGap | undefined
+    try {
+        trendGap = finished ? await getTrendGapFromHistory(transactions) : undefined
+    } catch (e) {
+        console.log('trend gap error, trading without it', e)
+    }
 
     return {
         finished,
@@ -239,6 +279,7 @@ export async function checkTransactions(provider: RpcProvider, account: Account)
         latest,
         unMatched,
         fallingKnife: getFallingKnife(transactions),
+        trendGap,
         maxFee: getMaxTrackedFee(transactions)
     }
 }

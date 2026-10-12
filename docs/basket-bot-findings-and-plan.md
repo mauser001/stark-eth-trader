@@ -436,6 +436,7 @@ Logic as now implemented in the live 1:1 bot (`src/quote.ts` `getFallingKnife`):
 - Conclusion: the delay knife (open threshold `diff x counter`) stays the best variant on all three bots; the size multiplier should be capped (2) or dropped, the higher buy back is a small optional plus.
 
 ### 8.17 Statistical structure of the 4 coins, and volatility-matched rung spacing (2026-10-12)
+Historical exploratory results: the initial rolling-vol implementation included one future hourly return. Section 8.19 corrects that implementation and supersedes the implementation/parity and transfer claims below. Low unconditional correlations and variance ratios alone do not establish or exclude a tradable edge.
 Question: is there exploitable cross-asset structure beyond running parallel ladders? Analysis `an1.py` (1-minute data, 893 days), new `ml1.py` switches `pair_filter` (only pairs containing one coin), `ema_z`/`ema_hl` (open a rung only when the log ratio is stretched >= z sigma from its EMA), `vol_k`/`vol_roll` (per-pair open spacing = max(diff, vol_k x hourly vol of that pair's ratio), static or trailing 30-day; close target stays at diff). Harness `ms_run.py`, outputs `ms_run.json`, `ms_tune.json`, `ms_tune2.json`. Defaults off, regression (1.614 / 1.106) reproduces.
 
 Measured structure (what there is to exploit):
@@ -473,6 +474,7 @@ Findings:
 - Caveats: hourly vol from Binance 1m data; avnu quote spreads, size-dependent slippage and MEV unmodelled; the sell2/sell3 harvest variants concentrate more value per rung, so execution slippage matters more there.
 
 ### 8.18 4k-wallet optimisation of the vol-spaced ladder (2026-10-12)
+Historical exploratory results, not an out-of-sample validation or an exact replay of the current live bot. See section 8.19 for corrected causal volatility, the hybrid counter plus capped buy-back, and comparable absolute wallet values. The event-count baselines labelled "live" below do not use the live bot's mutable matched/unmatched counter.
 Both bots will run with about 4k USD, so the full grid was rerun at 4k (all with trailing 30-day vol): 1:1 `vol_k` 2-5 x `knife` 1-3 x `sell` 2-10%; 4c `vol_k` 1.5-3 x `knife` 1-2(3) x `sell` 1-5%; plus `close_k` (new in `ml1.py`: a rung's close target is max(diff, close_k x hourly vol at open) instead of the flat diff). Harness `ms_sweep.py` (env `MS_FINAL` for the finalists with thirds), report `ms_sweep_rep.py`, outputs `ms_sweep.json`, `ms_final.json`.
 
 | bot (4k) | config | real path (thirds) | rts (thirds) | 9x90d prod (worst) | tr/d |
@@ -497,3 +499,108 @@ Knife window and knife strength (user questions; `kn_run.py`, `kn2_run.py`):
 - A shorter knife window (6 or 8 instead of 10 transactions) does not make the knife kick in earlier - the counter rises by 1 per net unmatched trade regardless. The window only caps the counter and sets how fast old opens are forgotten; with 6 the gap relaxes during a long downtrend and the bot buys again. It is worse everywhere for the plain 1:1 bot (n6: real 0.33, windows 0.75 vs n10 0.39 / 0.78). Longer windows are better: n20 0.47 / 0.84, n40 0.56 / 0.89. For the vol-spaced configs n10 stays best (1:1) or is within noise (4c).
 - Keeping the 0.5% gap (frequent trading preserved) and only strengthening the knife is the best per-trade-count option for the 1:1: `knife 2, window 40` gives real 0.677, rts 1.415 (best 1:1 rts of all variants), windows 0.939 (worst 0.854) at an unchanged 3.1 trades/day; `knife 3, n40` real 0.722, windows 0.946 at 2.6/day. The vol gap still protects more (real 0.971) but costs about 40% of the trades; the knife-only route only suppresses opens inside downtrends and keeps harvesting chop.
 - Counting variants (user idea: arm earlier after a busy balanced phase; `knife_live`/`knife_open` in `ml1.py`, `kn3_run.py`): with one window the buy-backs "bank credits" (after 20 opens + 20 closes the knife arms only at the 21st new buy). Hybrid = opens counted over the last 40 txs, buy-back credits only over the last 10: 1:1 real 0.579, rts 1.516, windows 0.828 (worst 0.783) at 4.2 trades/day - more trades and the best rts, but clearly weaker drift windows than ev n40 (0.939). Credit window 6 lies between; credits 0 (counter = still-open rungs within the last 40 txs) equals ev n40 (real 0.683, windows 0.929, worst 0.867 - slightly better worst). Counter = all open rungs without any window kills trading (0.7-1.4/day). Same picture on 4c (hybrid: rts 1.715 to 1.845, windows 0.943 to 0.859). So: single long window = drift protection; short credit window = mean-reversion bet with more trades; no free lunch.
+
+### 8.19 Corrected 4k comparison, shared inventory and portfolio rotation (2026-10-12)
+
+Research only; no live source changes. Engines/harnesses: `ml1.py`, `portfolio_rotation.py`, `basket_round4.py`, `test_basket_round4.py`. Outputs: `basket_round4.json`, `basket_round4_followup.json`, `basket_round4_regime.json` in git-ignored `data/history`. There were 832 strategy/scenario/cost runs across these batches.
+
+#### Corrections to earlier conclusions
+
+- Rolling volatility previously indexed the return ending at hour h+1 at hour h. It now includes only completed hourly returns, with hourly threshold refresh instead of daily refresh. A prefix-invariance test verifies that appending future prices does not change earlier simulated trades.
+- The live-style hybrid now stores its counter before the new opening is added, and uses the live buy-back cap of 2. Previous `knife_live` tests used plain 0.5% closes, while earlier "live" event-count baselines used a different counter altogether. These are still simplified price-based simulations, not exact avnu execution parity.
+- The research delay knife is `1 + strength * net-event-count`; the live hybrid uses still-unmatched transactions minus recent opposite-direction matched transactions. They are distinct variants, not interchangeable labels.
+- Previous split-window comparisons reused data already examined during strategy selection. They are descriptive subperiod checks, not untouched holdouts, and do not prove resistance to overfitting.
+- Full-path variance ratios and small unconditional lead-lag correlations suggest hypotheses; they neither prove tradable mean reversion nor rule out all cross-asset predictive strategies.
+- Funding is 4000 USD for every strategy. The 1:1 starts 50/50 ETH/STRK; the basket starts 25% each ETH/BTC/USDC/STRK. Compare both absolute ending dollars and surplus versus each strategy's own passive allocation.
+
+#### New mechanisms
+
+1. **Shared inventory guard:** all six ladders consult the same wallet. Block another buy into a coin once its portfolio weight exceeds its passive-basket weight by 5 or 10 percentage points. Closing remains allowed. This gate is checked before an open, not a strict post-trade weight cap.
+2. **Bounded global portfolio rotation, no ladders or lots:** compute each coin's log return relative to the basket; tilt passive weights with a 20% signal multiplier, normalize, and transfer directly from the most overweight coin to the most underweight. Each trade is at most 3% of equity; only rebalance a deviation exceeding 1% of equity. Test short-term reversal, rebound-confirmed reversal, trend-gated reversal, and 7/30/60-day momentum.
+   - Reversal uses deviation from a causal one-day EMA; momentum uses a bounded 7/30/60-day relative-return signal.
+   - Unlike origin-bound lots, this strategy can realise losses. It is not a profitable-close-only algorithm.
+   - Actual STRK gas is deducted from the wallet, with an affordability check; no fabricated negative-balance credit.
+3. **Two sleeves:** allocate 75/25 or 50/50 capital to the balanced ladder and momentum rotation. Each sleeve pays its own costs. This is capital budgeting, not a fully integrated shared execution optimizer.
+4. **Trend-only wide gaps:** keep the tight gap in ordinary chop. Apply volatility-wide spacing only to an opening direction that buys the losing side of a pair after a >5% seven-day relative move (or >3% one-day move). Signals update hourly; buy-back targets stay unchanged. This aims to preserve small-bounce activity without funding every rung of a sustained move.
+
+#### Historical results
+
+Full real path, its mirrored return-to-start (RTS), three real thirds, and nine non-overlapping 90-day windows. Real costs: 0.06% swap cost, 0.18 STRK paid gas, existing ladder profit checks. Stress costs double swap cost and paid gas. Ratios below are wallet / own passive hold; >1 means trading added value, not necessarily a positive USD return.
+
+| 4k strategy | Real vs hold | Ending USD | RTS vs hold | 9-window product / worst | Trades/day, real |
+|---|---|---|---|---|---|
+| 1:1 current hybrid, higher buy-back capped at 2 | 0.582 | 990 | 1.484 | 0.873 / 0.800 | 2.7 |
+| 1:1 vol defensive (v4, delay knife3) | 0.866 | 1473 | 1.276 | 0.958 / 0.938 | 1.2 |
+| 1:1 hybrid, trend-only wide gap, 7d | 0.760 | 1292 | 1.695 | 0.899 / 0.837 | 2.9 |
+| 4c hybrid tight, sell1 | 0.945 | 2987 | 1.678 | 0.883 / 0.947 | 8.9 |
+| **4c balanced vol ladder (v2.5, knife2, sell2, close2)** | **1.063** | **3360** | **1.803** | **0.942 / 0.951** | **4.4** |
+| 4c vol hybrid, sell2 | 0.954 | 3015 | 1.848 | 0.853 / 0.931 | 7.3 |
+| 4c vol ladder + inventory10 | 0.941 | 2976 | 1.449 | 0.942 / 0.952 | 2.6 |
+| 4c existing hopping reference | 0.556 | 1757 | 0.609 | 0.808 / 0.888 | 15.9 |
+| 4c global reversal | 0.890 | 2813 | 0.815 | 0.856 / 0.965 | 4.5 |
+| 4c global momentum30 | 1.090 | 3447 | 1.194 | 1.032 / 0.952 | 0.9 |
+| 4c 50/50 ladder/momentum sleeves | 1.032 | 3263 | 1.395 | 0.975 / 0.980 | 3.9 |
+| 4c hybrid, trend-only wide gap, 1d | 0.988 | 3125 | 1.645 | 0.916 / 0.955 | 8.3 |
+
+Passive ending wallets are 1700 USD for ETH/STRK and 3161 USD for the four-coin basket. Thus much of the basket's absolute advantage is allocation, especially less STRK plus USDC, not the algorithm. The balanced basket adds 198 USD over its own hold; current simulated 1:1 subtracts 710 USD from its hold. All shown full-history strategies still finish below their initial 4000 USD.
+
+The balanced basket beats current simulated 1:1 in absolute ending dollars in 8/9 quarter windows. However, its own-hold window product remains below 1. That product is a summary of separately restarted windows, not the return of a continuously compounded live wallet.
+
+Double-cost results: balanced basket real 1.003, RTS 1.622, windows 0.917; current 1:1 hybrid real 0.579, RTS 1.379, windows 0.811. The basket's real-path trading surplus becomes nearly zero. The tight hybrid basket drops to 0.911 real / 0.846 windows. More activity is not itself an advantage.
+
+#### Stress paths and subperiods
+
+Joint seven-day return-block resampling, three fixed seeds, 180-day paths. The same time blocks are used for all assets to preserve within-block cross-asset moves. Range paths remove each coin's full-path sampled drift (a synthetic scenario construction, not an input to the trading signals); drift paths retain it. Only three seeds, so this is a limited stress check, not statistical proof.
+
+| Strategy | Range mean / worst, vs hold | Drift mean / worst, vs hold |
+|---|---|---|
+| 1:1 current hybrid | 1.077 / 1.047 | 0.960 / 0.699 |
+| 1:1 vol defensive | 1.023 / 1.015 | 0.981 / 0.864 |
+| 1:1 trend-only gap7 | 1.033 / 1.030 | 0.961 / 0.735 |
+| 4c balanced vol ladder | 1.035 / 1.031 | 0.997 / 0.917 |
+| 4c trend-only gap1 | 1.043 / 1.027 | 0.983 / 0.906 |
+| 4c momentum30 | 0.944 / 0.899 | 0.951 / 0.898 |
+| 4c 50/50 sleeves | 0.979 / 0.955 | 0.968 / 0.959 |
+
+Momentum30 wins 6/9 historical windows and has a product above 1, but the last four windows compound to 0.976 and the synthetic tests lose. The 7/60-day variants and combined sleeves do not remove this weakness. Keep momentum as an unproven candidate, not a production recommendation.
+
+#### What to retain
+
+- **Best basket candidate in this round:** causal vol-balanced ladder, 2% rungs, 2x volatility close target. It improves the recovery-path payoff and drift survival, but has not established a robust positive edge versus passive holding across windows.
+- **Activity-oriented alternative:** hybrid + trend-only wide gaps. The 1:1 improves both real and RTS versus its current simulated baseline at similar activity; the basket retains about 8/day but sacrifices protection relative to always-wide spacing.
+- **Not improved:** legacy hop logic, global reversal, and simple shared inventory gates. Gates lower tail exposure/activity, but do not raise harvesting returns.
+- **Genuinely non-ladder candidate:** bounded momentum portfolio. Good on this real history, weak on stress paths; needs fresh forward data before claiming an edge. A more sophisticated signal must beat this simple control out of sample and after costs.
+- **Answer to "more profitable than 1:1?":** the basket is better in most historical dollar comparisons here and in the long mirrored path, but 1:1 wins the drift-neutral synthetic range test. No general guarantee; basket diversification and trading edge must be reported separately.
+
+Validation: three unit tests pass (flat-price no-trade, rotation accounting/nonnegative holdings, causal prefix invariance), and legacy no-vol reference results still reproduce 1.614 and 1.106. No exact live replay, 119-open-trade seeding, size-dependent avnu slippage, MEV, failed-trade clustering, or truly new out-of-sample market data. All runs start fresh and volatility has an expanding warm-up. Research scripts/results remain git-ignored; this document is the persistent tracked record.
+
+### 8.20 1:1 trend-only gap: trade-based trend/volatility and settings grid
+
+Question: can the trend and volatility for the trend-only wide gap be computed from the bot's own stored transactions (ratio + timestamp) instead of a separate price history? Script `data/history/trend_gap_grid.py`; `ml1.ladder` gained `trend_src='trades'`, `vol_src='trades'` and `trend_gap_mult`. All runs: 1:1 ETH/STRK, $4k, 3% rungs, live hybrid knife (40/10, strength 2, buy-back cap 2), fresh start. 41 configs x 17 scenarios (real, RTS, nine 90-day windows, 3 synthetic range + 3 synthetic drift) x base and double costs = 1,394 runs.
+
+Definitions (checked hourly, causal):
+- **trend (trades):** `move = log(current ratio / ratio of the last own trade at least d days old)`; no such trade -> no trend.
+- **vol (trades):** `sd = sqrt(sum of squared log-ratio steps between consecutive own trades in the last 30 days / hours)`; gap multiplier `max(1, k * sd / 0.5%)`; fewer than 3 trades -> 1.
+- **fixed:** constant multiplier x in an adverse trend.
+- The wide gap applies only to openings buying the coin that fell by more than m; it multiplies with the knife factor.
+
+Selected base-cost results (vs own hold; windows = product / worst; synthetic = range mean, drift mean / worst):
+
+| Config | Real (USD) | RTS | Windows | Range | Drift | Tr/day |
+|---|---:|---:|---:|---:|---:|---:|
+| current hybrid | 0.582 ($990) | 1.484 | 0.873 / 0.800 | 1.077 | 0.960 / 0.699 | 2.7 |
+| price d7 m5% vol4 (8.19) | 0.760 ($1292) | 1.695 | 0.899 / 0.837 | 1.033 | 0.961 / 0.735 | 2.9 |
+| **trades d7 m5% tvol4** | 0.829 ($1410) | 1.648 | **0.967** / 0.885 | 1.039 | 0.978 / 0.776 | 2.8 |
+| trades d14 m5% tvol4 | **0.873** ($1485) | 1.697 | 0.926 / 0.863 | 1.053 | 0.965 / 0.775 | 3.0 |
+| trades d14 m10% tvol4 (milder) | 0.821 ($1396) | **1.742** | 0.966 / 0.866 | 1.061 | 0.968 / 0.757 | 3.1 |
+| trades d7 m5% fix4 | 0.795 ($1352) | 1.662 | 0.927 / 0.880 | 1.054 | 0.991 / 0.797 | 2.9 |
+| price d3 (any) | 0.66-0.73 | 1.57-1.65 | 0.79-0.82 | ~1.055 | ~0.94 / ~0.70 | ~2.9 |
+
+Double costs: trades d7 m5% tvol4 stays first on windows (0.930, real 0.817, RTS 1.499) versus hybrid 0.811 / 0.579 / 1.379.
+
+Findings:
+- Using the bot's own trades works as well as or better than using minute prices. The trade-based vol has a similar median (about 6.9x base vs 6.2x) but a fatter top (90th percentile about 15x vs 11x), because trade-to-trade steps grow during trends, so it widens more when it matters.
+- The good region is consistent: trade-based, d 7-14, m 5-10%, k 4-8. Three-day lookbacks are too twitchy and are worse than d7/d14 everywhere. Fixed x2 adds little; fixed x4 is a simple but weaker alternative.
+- Cost: every trend gate gives up some drift-neutral range harvest (1.077 -> 1.04-1.06). The milder m10% variants keep more of it.
+- With trade references the gate is active (in one direction) 62-77% of the time. "Only in trends" still means one side is wide most of the time; the other side keeps the base gap.
+- Caveat: 41 configs were selected on the same history; the neighbourhood consistency is the main argument against pure overfitting. No live replay, no seeding with the 119 open trades.

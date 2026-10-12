@@ -12,6 +12,16 @@ export const FALLING_KNIFE_MATCH_COUNT = 10
 export const FALLING_KNIFE_STRENGTH = 2
 // cap for the stored counter when it raises the buy-back target (TRADE_DIFFERENCE_1000 * min(counter, cap))
 export const FALLING_KNIFE_BUYBACK_CAP = 2
+// trend gap: when the eth/strk ratio moved more than TREND_GAP_MOVE_1000 (per mille) against the coin a new trade would buy,
+// compared with the median of our trades at least TREND_GAP_DAYS old, that trade's opening gap is multiplied by
+// max(1, TREND_GAP_VOL_K * hourly vol / TRADE_DIFFERENCE_1000), hourly vol from our trades of the last TREND_GAP_VOL_DAYS days.
+// The multiplier is capped at TREND_GAP_MAX_MULT (0 = no cap).
+// It stacks with the falling knife. TREND_GAP_DAYS = 0 disables it
+export const TREND_GAP_DAYS = 14
+export const TREND_GAP_MOVE_1000 = 100
+export const TREND_GAP_VOL_K = 4
+export const TREND_GAP_VOL_DAYS = 30
+export const TREND_GAP_MAX_MULT = 6
 export const MIN_SEL_AMOUNT_STRK = BigNumber.from(process.env.MIN_SEL_AMOUNT_STRK)
 export const MIN_SEL_AMOUNT_ETH = BigNumber.from(process.env.MIN_SEL_AMOUNT_ETH)
 export const MIN_GAS_FEES = BigNumber.from(process.env.MIN_GAS_FEES || '0')

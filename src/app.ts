@@ -24,7 +24,7 @@ async function run() {
     const { account, provider } = await getAccount({ chainId, nodeUrl })
 
     // First let's get the latest transactions
-    const { finished, tx, unMatched, latest, maxFee, fallingKnife } = await checkTransactions(provider, account)
+    const { finished, tx, unMatched, latest, maxFee, fallingKnife, trendGap } = await checkTransactions(provider, account)
     if (!finished || !tx || !fallingKnife) {
         return
     }
@@ -63,6 +63,8 @@ async function run() {
     const openDifference = (sell: 'eth' | 'strk') => knifeCounter && fallingKnife.sell === sell ? TRADE_DIFFERENCE_1000.mul(1 + FALLING_KNIFE_STRENGTH * knifeCounter) : TRADE_DIFFERENCE_1000
     if (knifeCounter)
         console.log(`falling knife: counter ${knifeCounter} for selling ${fallingKnife.sell}, open difference ${openDifference(fallingKnife.sell!).toString()}`)
+    if (trendGap)
+        console.log(`trend gap: reference ratio ${trendGap.refRatio.toFixed(0)}, hourly vol ${(trendGap.hourlyVol * 100).toFixed(2)}%, multiplier ${trendGap.mult.toFixed(2)} in an adverse trend`)
 
     // If we have an open unmatched tx where we sold eth and try to get more. If we have no open tx where we sold eth we we try to sell a defined percentage
     const isEthMatch = !tx.matchedBy && tx.sell === 'eth'
@@ -70,7 +72,7 @@ async function run() {
     const strkRatio = isEthMatch ? matchRatio : getBestRatio('strk', ratioTxs) ?? matchRatio
     let quote: QuoteData | undefined = undefined;
     if (sellStrk)
-        quote = await getQuote('strk', sellStrk, account, avnuOptions, strkRatio, tx, unMatched, failedFees, maxFee, openDifference('strk'))
+        quote = await getQuote('strk', sellStrk, account, avnuOptions, strkRatio, tx, unMatched, failedFees, maxFee, openDifference('strk'), trendGap)
     else
         console.log('Not enough strk balance: ', latest.balanceStrk)
     if (!quote?.quote) {
@@ -79,7 +81,7 @@ async function run() {
         const sellEth = isStrkMatch ? BigNumber.from(tx.buyAmount) : getSellAmount(BigNumber.from(latest.balanceEth), SELL_PERCENT, MIN_SEL_AMOUNT_ETH)
         const ethRatio = isStrkMatch ? matchRatio : getBestRatio('eth', ratioTxs) ?? matchRatio
         if (sellEth)
-            quote = await getQuote('eth', sellEth, account, avnuOptions, ethRatio, tx, unMatched, failedFees, maxFee, openDifference('eth'))
+            quote = await getQuote('eth', sellEth, account, avnuOptions, ethRatio, tx, unMatched, failedFees, maxFee, openDifference('eth'), trendGap)
         else
             console.log('Not enough ethe balance: ', latest.balanceStrk)
     }
