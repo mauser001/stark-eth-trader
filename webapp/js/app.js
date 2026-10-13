@@ -1,6 +1,6 @@
 // Bump APP_VERSION and the ?v= query param on the app.js script tag in index.html whenever this
 // file changes, so browsers don't keep serving a stale cached copy.
-const APP_VERSION = '9';
+const APP_VERSION = '10';
 
 const STORAGE_KEY = 'trader_viewer_password';
 const LAST_HASH_KEY = 'trader_last_trade_hash';
@@ -214,7 +214,7 @@ function renderTrades(trades, nextOpen) {
             : '-';
         const isLoss = t.netEth != null && t.netEth.startsWith('-');
         const sameDay = formatShortDate(t.fromTimestamp) === formatShortDate(t.toTimestamp);
-        const range = sameDay ? formatShortDate(t.fromTimestamp) : `${formatShortDate(t.fromTimestamp)} – ${formatShortDate(t.toTimestamp)}`;
+        const range = sameDay ? formatDate(t.fromTimestamp) : `${formatShortDate(t.fromTimestamp)} – ${formatShortDate(t.toTimestamp)}`;
         const counter = t.status === 'closed' ? t.matchedFallingKnifeCounter : t.fallingKnifeCounter;
         const knifeDetail = Number.isInteger(counter) && counter > 1
             ? `<span class="status-detail">${t.status === 'closed' ? 'Matched falling knife' : 'Falling knife'}: ${counter}</span>`
