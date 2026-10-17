@@ -5,6 +5,7 @@ import { FALLING_KNIFE_BUYBACK_CAP, FALLING_KNIFE_MATCH_COUNT, FALLING_KNIFE_TX_
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 import { applyTrendGap, TrendGap } from "./trendGap"
+import { recordQuoteRatio } from "./quoteLog"
 
 // opening gap for a quote: the trend gap compares the quote's market ratio (before our fee deduction) with the trend reference
 function getOpenDifference(sell: EthOrStrk, quote: Quote, openDifference: BigNumber, trendGap?: TrendGap): BigNumber {
@@ -18,6 +19,8 @@ function getOpenDifference(sell: EthOrStrk, quote: Quote, openDifference: BigNum
 export async function getQuote(sell: EthOrStrk, sellAmount: BigNumber, account: Account, avnuOptions: AvnuOptions, ratio: BigNumber, tx: TxData, unMatched: TxData[] = [], failedFees: BigNumber = BigNumber.from('0'), maxTrackedFee?: BigNumber, openDifference: BigNumber = TRADE_DIFFERENCE_1000, trendGap?: TrendGap): Promise<QuoteData | undefined> {
     // We get the quotes for the amount we want to sell and then check if we make enough profit
     const quotes: Quote[] = await getAvnuQuotes(sell, sellAmount, account.address, avnuOptions)
+    if (quotes.length)
+        recordQuoteRatio(sell, getTxRatio(sell, BigNumber.from(quotes[0].sellAmount), BigNumber.from(quotes[0].buyAmount)).toString())
     let quote: QuoteData | undefined
     const matchDifference = getMatchTradeDifference([tx])
     // We get a list of quotes - it seems we always get one, but maybe in the future there will be more so we compare them

@@ -58,6 +58,7 @@ Used tech / Prerequisites:
 - TARGET_ETH_BALANCE - once the latest transaction's ETH balance reaches/exceeds this, the process stops trading; 0 disables the check
 - ETHERNET_ADAPTER_NAME / ETHERNET_RESTART_COOLDOWN_MS / ETHERNET_RESTART_ERROR_WINDOW_MS - optional, used to auto-restart a flaky ethernet adapter on repeated network errors (see `src/ethernet.ts`)
 - WEBAPP_URL / WEBAPP_SECRET - optional, endpoint + shared secret for reporting trades to the webapp dashboard (see [Webapp dashboard](#webapp-dashboard) below); leave both empty to disable reporting entirely
+- QUOTE_LOG_DIR - optional folder (e.g. `./data/quotes`) for a market log used by simulations; empty disables it. Each run appends `ts,strkToEth,ethToStrk` to `quotes-YYYY-MM.csv` (UTC month): the avnu quote ratios (STRK per ETH * 100000, before fees) of the first quote for selling STRK and for selling ETH in that run. A direction that wasn't quoted in the run stays empty. About 7k rows / 0.25 MB per day
 
 ## Program logic
 

@@ -11,6 +11,7 @@ import { getEstimatedTotalFee, getMaxTotalFee, getRatio, serializeResourceBounds
 import { MAX_GAS_FEES, MIN_SEL_AMOUNT_ETH, MIN_SEL_AMOUNT_STRK, SELL_PERCENT, TARGET_ETH_BALANCE, TIP, TRADE_DIFFERENCE_1000, FALLING_KNIFE_STRENGTH } from './conts';
 import { QuoteData, TxData } from './types';
 import { notifyRunSucceeded, restartEthernetAdapterIfNetworkIssue } from './ethernet';
+import { flushQuoteLog } from './quoteLog';
 
 const useTestnet = process.env.USE_TESTNET === 'true'
 const chainId = useTestnet ? constants.StarknetChainId.SN_SEPOLIA : constants.StarknetChainId.SN_MAIN
@@ -154,6 +155,7 @@ async function loop() {
             console.warn('run failed: ', e)
         }
     }
+    flushQuoteLog()
     setTimeout(() => loop(), 10000)
 }
 
