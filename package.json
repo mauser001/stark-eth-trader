@@ -9,6 +9,7 @@
     "dev": "npm run build && node --env-file=.env dist/app.js",
     "prod": "npm run build && node --env-file=prod.env dist/app.js",
     "report-prod": "npm run build && node --env-file=prod.env dist/reporting.js",
+    "replay-quotes-prod": "npm run build && node --env-file=prod.env scripts/replayQuotes.cjs",
     "extract-prod": "npm run build && node --env-file=prod.env dist/extractMatched.js",
     "backfill-aggregate-prod": "npm run build && node --env-file=prod.env dist/backfillAggregate.js",
     "add-transfer-prod": "npm run build && node --env-file=prod.env dist/addTransfer.js",

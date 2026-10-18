@@ -604,3 +604,93 @@ Findings:
 - Cost: every trend gate gives up some drift-neutral range harvest (1.077 -> 1.04-1.06). The milder m10% variants keep more of it.
 - With trade references the gate is active (in one direction) 62-77% of the time. "Only in trends" still means one side is wide most of the time; the other side keeps the base gap.
 - Caveat: 41 configs were selected on the same history; the neighbourhood consistency is the main argument against pure overfitting. No live replay, no seeding with the 119 open trades.
+
+### 8.21 First avnu quote-log replay: activity after the fall (2026-10-18)
+
+Data: 6,882 rows from `data/quote_logs/quotes-2026-10.csv`, 2026-10-17 12:53:01 to
+2026-10-18 09:17:00 UTC (14:53 to 11:17 local, about 20.4 hours). Both directions
+are present except for one missing ETH-sell quote; no gaps longer than one minute.
+The ETH-sell ratio ranged roughly 35,293-38,564 STRK/ETH. This was a choppy path
+with continuing STRK weakness, not a flat range.
+
+Method:
+- Seed the actual wallet, open positions and transaction windows at the first quote.
+  Undo a position's `matchedBy` when its closing trade occurred after that seed time.
+  Never import subsequent real trades into a running counterfactual.
+- Run the compiled production `getQuote`, matching/combined-close logic and knife
+  helpers offline, supplying the recorded directional ratio as the avnu response.
+  Mark both the original positions and the closing trade as matched.
+- Preserve 3% sizing, minimum amounts, the 1 STRK fee-check floor plus tip, and the
+  existing trend-gap rules (trade history refreshed hourly for the trend estimate).
+  Use 0.23 STRK actual gas per execution, 0.3% slippage buffer and a 20-second
+  post-trade cooldown. Re-quotes assume the same ratio at a different size.
+  Missing directional observations are skipped, not interpolated.
+- Quote ratios already include the observed directional spread/route pricing.
+  Do not subtract the earlier Binance-based 0.29% cost estimate again.
+  Slippage is a trigger buffer, not an automatic execution charge.
+- Mark the final wallet and the unchanged starting holdings at the same final
+  quote midpoint. Include unrealised inventory changes, not just realised gains.
+
+Baseline validation: replay produces one close and one opening, like the real
+bot. Close: 14:06:18 UTC simulated vs 14:06:19 actual. Opening: 14:21:39 simulated
+vs 14:23:37 actual. A constant-price baseline test produces no trades and exactly
+zero excess return. This is a much closer replay than the earlier Binance proxy,
+but it is not exact execution reconstruction.
+
+Full-window results (extra open positions exclude inherited seed positions):
+
+| Variant | Opens | Close txs | New positions still open | Excess ETH vs hold |
+|---|---:|---:|---:|---:|
+| Current 40/10, strength 2 | 1 | 1 | 1 | +0.000091 |
+| No knife | 14 | 8 | 7 | -0.000922 |
+| Strength 1 | 2 | 1 | 2 | -0.000255 |
+| Cap opening gap at 3% | 5 | 3 | 3 | +0.000194 |
+| Window 20, credits 10 | 3 | 2 | 2 | +0.000191 |
+| Counter decay, one point / 6h | 2 | 2 | 1 | +0.000368 |
+| Counter decay, one point / 12h | 2 | 2 | 1 | +0.000444 |
+
+Decay means `effectiveCounter = max(0, rawCounter - floor(hoursSinceLastOpening / N))`.
+Each new opening resets that clock and re-arms the raw transaction-based counter;
+ordinary closing credits and the buy-back cap remain unchanged.
+
+For the narrower question "what if we changed settings immediately after the last
+real opening at 16:23 local?", re-seed from that actual state and replay only later
+quotes. Current settings make no trades. Six-hour decay adds one completed round
+trip (about 06:02 buy STRK / 09:49 sell back local), +0.000275 ETH vs hold, with no
+additional position left open. Twelve-hour decay similarly adds one round trip,
++0.000380 ETH. These are small gains, not evidence of a large new edge.
+
+Robustness:
+- With a 0.5% instead of 0.3% slippage buffer, six-hour decay still completes the
+  extra round trip. Twelve-hour decay does not; its higher base-case gain depends
+  on catching a brief ratio peak.
+- With an additional 0.1% adverse execution loss on every fill, six-hour decay
+  remains positive (+0.000316 ETH for the full window). The 3% gap cap turns
+  negative (-0.000203 ETH).
+- Synthetic stress, not observed history: monotonically increase STRK/ETH by 20%
+  over the same timestamps, preserving the starting quote spread. Current settings
+  open two positions and lose 0.002268 ETH vs hold; six-hour decay also opens two
+  but earlier, losing 0.002755 ETH. A 3% cap opens five (-0.008554 ETH); no knife
+  opens twenty (-0.028322 ETH). Decay retains substantial protection but is not free.
+
+Interpretation: current inactivity follows the intended risk guard. Counter 8
+requires an 8.5% opening gap, before slippage and the fee floor; nearest existing
+position ratio is about 35,698. Opening needs roughly 38,900-39,000, above this
+sample's peak. Closing that position needs roughly 35,100-35,200. The trend gap
+is not the active obstacle on ETH-sell openings in this window.
+
+Candidate for further shadow testing: slow six-hour counter decay, not removing
+the knife or hard-capping its gap. Do not tune for trade count alone. Twenty
+hours, two real trades and one favourable extra round trip are insufficient for
+deployment confidence. Amount-dependent quotes, per-quote slippage, route changes,
+real fee estimates, confirmation timing and failed executions are not recorded,
+so treat all variant P&L as indicative. Production settings were not changed.
+
+Reusable replay: `npm run replay-quotes-prod -- --out .\data\replay-next.json`
+compares current settings against six-hour decay using all monthly CSVs. The
+implementation is `scripts/replayQuotes.cjs`; see the README's "Offline quote
+replay" section for date windows, execution sensitivities and seed limitations.
+It uses the compiled production quote/matching module with an offline quote
+feed, not the live account. On the frozen 6,882-row window it reproduces the
+current and six-hour results above. Keep future periods genuinely unseen when
+assessing whether the candidate generalises.

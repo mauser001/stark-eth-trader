@@ -69,6 +69,74 @@ Used tech / Prerequisites:
 
 ## Reporting
 
+### Offline quote replay
+
+Compare the current falling-knife settings with a candidate that subtracts one
+counter point per six hours since the last opening. Each new opening resets the
+decay clock; closing credits remain unchanged. This command never connects to the
+wallet, executes transactions or modifies trade/quote files:
+
+```powershell
+npm run replay-quotes-prod -- --out .\data\replay-2026-10-20.json
+```
+
+It reads all `quotes-YYYY-MM.csv` files in `QUOTE_LOG_DIR` and seeds both variants
+from the actual trade history in `TRADE_FILE` immediately before the first selected
+quote. Keep a complete copy of that trade history before archiving trades; an
+archived history cannot reliably reconstruct earlier states.
+
+Select a period or test more conservative execution assumptions:
+
+```powershell
+npm run replay-quotes-prod -- --from "2026-10-18T11:30:00+02:00" --to "2026-10-21T11:30:00+02:00" --out .\data\replay-next-three-days.json
+npm run replay-quotes-prod -- --decay-hours 6 --slippage 0.005 --fill-loss 0.001 --out .\data\replay-conservative.json
+```
+
+Run the extended comparison suite with the same execution assumptions for every case:
+
+```powershell
+npm run replay-quotes-prod -- --suite extended --slippage 0.005 --fill-loss 0.001
+```
+
+The default six-hour suite has 15 cases: current settings; decay at 2, 4, 6, 12
+and 24 hours; a reduced knife addition (0.5 percentage points per counter instead
+of today's 1 point with the 0.5% base gap); base-only buybacks (0.5% target,
+without the knife multiplier, including inherited positions); opening sizes of
+5% and 10% of the remaining sell-token balance; and five selected combinations.
+Independent variants have no decay unless labelled otherwise. `--decay-hours`
+changes the reference decay used in combinations. The table also shows excess
+ETH versus the current setup and the worst sampled value relative to hold.
+All resolved settings are recorded per case in JSON. `--suite basic` (default)
+retains the original two-case comparison.
+
+Larger opening sizes do not resize inherited positions or their buybacks.
+Because quotes lack amount/depth data, larger-size results are especially
+optimistic if liquidity worsens with size; check them with additional fill loss.
+The suite is a selected comparison, not an exhaustive parameter grid or proof
+that its best-performing case will generalise.
+
+Run `npm run replay-quotes-prod -- --help` for all options. Slippage and fill loss
+are fractions (`0.003` = 0.3%). Defaults: 0.3% slippage *trigger buffer*, 0.23 STRK
+actual gas per trade, zero additional fill loss and 20 seconds between executions.
+The configured gas-check floor and tip still apply. Failed fees at the seed
+default to zero; override with `--failed-fees-strk` if known. Without `--out`, a
+timestamped report is saved under `data`. Existing files are never overwritten.
+
+The console compares opens, closes, additional positions left open, minimum ETH
+balance and excess wallet value versus holding the starting assets. The JSON also
+contains trade timelines, actual trades for comparison, coverage warnings and the
+settings used. Excess value includes unrealised inventory changes at the final
+quote midpoint, not just realised profits.
+
+Limitations: quotes were collected for the live bot's amounts; counterfactual
+sizes and combined re-quotes reuse the recorded ratio. Gas, slippage and fill
+loss are assumptions, trend estimates refresh hourly and after trades, and failed
+executions/confirmation delays are not reconstructed. Missing directional quotes
+are skipped, never interpolated. Compare the current-settings timeline with real
+trades first; large mismatches invalidate conclusions. Validate decay on new,
+unseen periods and sustained falls, not just the range that motivated it. A higher
+trade count alone is not evidence of improvement.
+
 Run ```script npm run report-prod ``` to get a short summary of your trades
 
 ### Local data & aggregate reports
