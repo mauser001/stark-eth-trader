@@ -77,7 +77,7 @@ decay clock; closing credits remain unchanged. This command never connects to th
 wallet, executes transactions or modifies trade/quote files:
 
 ```powershell
-npm run replay-quotes-prod -- --out .\data\replay-2026-10-20.json
+npm run replay-quotes-prod
 ```
 
 It reads all `quotes-YYYY-MM.csv` files in `QUOTE_LOG_DIR` and seeds both variants
@@ -98,7 +98,7 @@ Run the extended comparison suite with the same execution assumptions for every 
 npm run replay-quotes-prod -- --suite extended --slippage 0.005 --fill-loss 0.001
 ```
 
-The default six-hour suite has 15 cases: current settings; decay at 2, 4, 6, 12
+The default six-hour extended suite has 17 cases: current settings; decay at 0.5, 1, 2, 4, 6, 12
 and 24 hours; a reduced knife addition (0.5 percentage points per counter instead
 of today's 1 point with the 0.5% base gap); base-only buybacks (0.5% target,
 without the knife multiplier, including inherited positions); opening sizes of
@@ -109,18 +109,78 @@ ETH versus the current setup and the worst sampled value relative to hold.
 All resolved settings are recorded per case in JSON. `--suite basic` (default)
 retains the original two-case comparison.
 
+For every combination of these settings, use the matrix suite:
+
+```powershell
+npm run replay-quotes-prod -- --suite matrix --workers 4
+```
+
+The matrix combines the configured and reduced knife strengths, configured and
+base-only buyback caps, configured/5%/10% opening sizes, and decay disabled or at
+0.5, 1, 2, 4, 6, 12 and 24 hours. `--decay-hours` also adds the chosen interval
+if it is not already present. Duplicate values are removed; with the default
+settings and six-hour decay this produces 96 cases. The current setup remains
+the baseline for every comparison, regardless of its position after sorting.
+
+All suites run independent cases in a bounded worker-thread pool, using up to
+four workers by default while leaving one available CPU free where possible.
+Use `--workers N` to control the pool or `--workers 1` to run sequentially.
+Each worker holds its own copy of the input data, so reduce the worker count
+for large histories or limited memory. Quote rows within each case always run
+sequentially. Tied results retain suite order regardless of worker completion order.
+
+The table and JSON results are sorted by `bestVsHold` descending by default:
+the highest sampled wallet value relative to holding the starting assets.
+`worstVsHold` is the lowest sampled relative value, and `vsHold` is the final
+relative value. Best and worst include the initial 0% starting point and are
+not peak-to-trough drawdown metrics. A high best value is a temporary, potentially
+unrealised peak, not a guaranteed achievable exit or final return.
+
+Best and worst show hours after the first selected quote in parentheses, e.g.
+`1.2345% (2.50h)`. Ties use the first occurrence; an unchanged initial 0% value
+is shown at `0.00h`. JSON retains full-precision `bestVsHoldHours` and
+`worstVsHoldHours`.
+
+The compact `o/c/n` column contains opens / closes / new positions left open.
+`excessETH` is the final advantage over holding expressed in ETH, while `vsHold`
+expresses that same advantage as a percentage of the final hold value.
+`excessETH` remains in JSON but is omitted from the table.
+
+Use `--sort-by` and optionally `--sort-order asc|desc` to choose the ranking.
+The combined counts remain individually sortable as `opens`, `closes` and
+`newPositionsLeft`; `excessETH` also remains available for sorting:
+
+```powershell
+npm run replay-quotes-prod -- --suite matrix --sort-by bestVsHold
+npm run replay-quotes-prod -- --suite matrix --sort-by vsHold
+npm run replay-quotes-prod -- --suite matrix --sort-by newPositionsLeft --sort-order asc
+```
+
+Numeric sorting uses full precision, not rounded table values. `deltaVsCurrentETH`
+always compares final excess ETH against the current setup, not the top-ranked
+case. The JSON records the sort settings, `bestVsHoldPercent`, and each case's
+`deltaVsCurrentETH`.
+
 Larger opening sizes do not resize inherited positions or their buybacks.
 Because quotes lack amount/depth data, larger-size results are especially
 optimistic if liquidity worsens with size; check them with additional fill loss.
-The suite is a selected comparison, not an exhaustive parameter grid or proof
-that its best-performing case will generalise.
+The basic and extended suites are selected comparisons; the matrix exhausts only
+the listed candidate values. None proves that its best-performing case will generalise.
 
 Run `npm run replay-quotes-prod -- --help` for all options. Slippage and fill loss
 are fractions (`0.003` = 0.3%). Defaults: 0.3% slippage *trigger buffer*, 0.23 STRK
 actual gas per trade, zero additional fill loss and 20 seconds between executions.
 The configured gas-check floor and tip still apply. Failed fees at the seed
-default to zero; override with `--failed-fees-strk` if known. Without `--out`, a
-timestamped report is saved under `data`. Existing files are never overwritten.
+default to zero; override with `--failed-fees-strk` if known. By default only
+the table is displayed; no report file is created. Add `--save` to write a
+timestamped JSON report under `data`, or `--out FILE` to save to a specific path
+(which also enables saving). Reports are written only after replay completes.
+Existing files are never overwritten.
+
+```powershell
+npm run replay-quotes-prod -- --suite matrix --save
+npm run replay-quotes-prod -- --suite matrix --out .\data\replay-next.json
+```
 
 The console compares opens, closes, additional positions left open, minimum ETH
 balance and excess wallet value versus holding the starting assets. The JSON also

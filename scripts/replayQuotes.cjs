@@ -3,6 +3,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const assert = require('node:assert/strict');
+const { availableParallelism } = require('node:os');
+const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads');
 
 const root = path.resolve(__dirname, '..');
 const quoteFile = path.join(root, 'dist', 'quote.js');
@@ -65,8 +67,9 @@ function markRatio(row) {
 
 // Evaluate the compiled production module with only its external quote feed, logging
 // and retry timer replaced. No account/provider or SDK network call is created.
+let quoteScript;
 function offlineQuotes(fetchQuotes, constants) {
-    const code = fs.readFileSync(quoteFile, 'utf8');
+    quoteScript ??= new vm.Script('(function(require,module,exports){' + fs.readFileSync(quoteFile, 'utf8') + '\n})', { filename: quoteFile });
     const mod = { exports: {} };
     const requireOffline = name => {
         if (name === '@avnu/avnu-sdk') return { getQuotes: fetchQuotes };
@@ -77,7 +80,7 @@ function offlineQuotes(fetchQuotes, constants) {
     const context = vm.createContext({ console: { log() {}, warn() {}, error() {} },
         process: { env: { ETH_TOKEN: 'eth', STARK_TOKEN: 'strk' } },
         setTimeout: callback => callback() });
-    const load = vm.runInContext('(function(require,module,exports){' + code + '\n})', context, { filename: quoteFile });
+    const load = quoteScript.runInContext(context);
     load(requireOffline, mod, mod.exports);
     return mod.exports;
 }
@@ -98,10 +101,23 @@ async function replay(trades, rows, options) {
     let eth = BigInt(hist.at(-1).balanceEth), strk = BigInt(hist.at(-1).balanceStrk);
     const initialEth = eth, initialStrk = strk;
     let lastOpening = Math.max(0, ...hist.filter(t => t.sell && !t.matchedBy).map(t => t.timestamp || 0));
-    let lastTrade = 0, current, open, best, knife, maxFee, trendGap, trendHour = -1, trendDirty = true;
-    let minVsHold = 1, minEth = units(eth);
+    let lastTrade = 0, current, open, best, knife, failedFees, maxFee, points, plans, trendGap, trendKey, trendHour = -1, trendDirty = true;
+    let minVsHold = 1, maxVsHold = 1, minEth = units(eth);
+    let worstVsHoldHours = 0, bestVsHoldHours = 0;
     const events = [];
     const gas = BigInt(Math.round(options.gas * 1e18));
+    const holdEth = units(initialEth), holdStrk = units(initialStrk);
+    const fillFactor = BigInt(1000000 - Math.round(options.fillLoss * 1e6));
+    const sellPct = BigInt(c.SELL_PERCENT.gt(100) ? 100 : c.SELL_PERCENT.toString());
+    const minimums = { eth: BigInt(c.MIN_SEL_AMOUNT_ETH.toString()), strk: BigInt(c.MIN_SEL_AMOUNT_STRK.toString()) };
+    const trendOptions = {
+        days: c.TREND_GAP_DAYS, move: c.TREND_GAP_MOVE_1000 / 1000,
+        volK: c.TREND_GAP_VOL_K, volDays: c.TREND_GAP_VOL_DAYS,
+        maxMult: c.TREND_GAP_MAX_MULT, baseDifference: c.TRADE_DIFFERENCE_1000.toNumber() / 1000
+    };
+    // getQuote is deterministic offline, so a rejected (sell, quote ratio, counter) stays rejected
+    // until the history (refresh) or the trend gap changes.
+    const rejected = new Set();
     const q = offlineQuotes(async request => {
         const sell = request.sellTokenAddress, ratio = current[sell];
         if (!ratio) return [];
@@ -109,12 +125,37 @@ async function replay(trades, rows, options) {
         const buy = sell === 'eth' ? amount * ratio / 100000n : amount * 100000n / ratio;
         return [{ sellAmount: amount, buyAmount: buy, gasFees: 0n, estimatedSlippage: options.slippage }];
     }, c);
+    // Everything here only depends on the trade history and balances, so it is computed once per trade
+    // instead of once per quote row.
     function refresh() {
         open = hist.filter(t => !t.matchedBy && t.sell);
         best = q.getBestTx(open) || hist.at(-1);
         knife = q.getFallingKnife(hist);
-        maxFee = hist.slice(-10).reduce((v, t) => t.actualFees && BigInt(t.actualFees) > v ? BigInt(t.actualFees) : v, 0n);
+        failedFees = bn(options.failedFees);
+        maxFee = bn(hist.slice(-10).reduce((v, t) => t.actualFees && BigInt(t.actualFees) > v ? BigInt(t.actualFees) : v, 0n));
+        points = trend.toRatioPoints(hist);
+        plans = {};
+        for (const sell of ['strk', 'eth']) {
+            const matching = !best.matchedBy && best.sell !== sell;
+            const balance = sell === 'eth' ? eth : strk;
+            const minimum = minimums[sell];
+            if (balance < minimum) continue;
+            const pct = balance * sellPct / 100n;
+            const amount = matching ? BigInt(best.buyAmount) : pct > minimum ? pct : minimum;
+            if (amount > balance) continue;
+            const target = matching ? q.getTxRatio(best.sell, bn(best.sellAmount), bn(best.buyAmount))
+                : q.getBestRatio(sell, open.length ? open : [hist.at(-1)]);
+            plans[sell] = { amount: bn(amount), target, gaps: new Map() };
+        }
+        rejected.clear();
         trendDirty = true;
+    }
+    function gapFor(plan, sell, counter) {
+        const knifeCounter = counter > 0 && knife.sell === sell ? counter : 0;
+        let gap = plan.gaps.get(knifeCounter);
+        if (!gap) plan.gaps.set(knifeCounter, gap = knifeCounter
+            ? c.TRADE_DIFFERENCE_1000.mul(1 + c.FALLING_KNIFE_STRENGTH * knifeCounter) : c.TRADE_DIFFERENCE_1000);
+        return gap;
     }
     refresh();
     for (current of rows) {
@@ -122,32 +163,24 @@ async function replay(trades, rows, options) {
         if (trendDirty || hour !== trendHour) {
             trendHour = hour;
             trendDirty = false;
-            trendGap = trend.getTrendGap(trend.toRatioPoints(hist), current.ts, {
-                days: c.TREND_GAP_DAYS, move: c.TREND_GAP_MOVE_1000 / 1000,
-                volK: c.TREND_GAP_VOL_K, volDays: c.TREND_GAP_VOL_DAYS,
-                maxMult: c.TREND_GAP_MAX_MULT, baseDifference: c.TRADE_DIFFERENCE_1000.toNumber() / 1000
-            });
+            trendGap = trend.getTrendGap(points, current.ts, trendOptions);
+            const key = trendGap ? `${trendGap.refRatio}|${trendGap.mult}` : '';
+            if (key !== trendKey) rejected.clear();
+            trendKey = key;
         }
         const counter = effectiveCounter(knife.counter, current.ts, lastOpening, options.decayHours);
         if (current.ts - lastTrade >= options.cooldown * 1000) {
             for (const sell of ['strk', 'eth']) {
-                if (!current[sell]) continue;
-                const matching = !best.matchedBy && best.sell !== sell;
-                const balance = sell === 'eth' ? eth : strk;
-                const minimum = BigInt((sell === 'eth' ? c.MIN_SEL_AMOUNT_ETH : c.MIN_SEL_AMOUNT_STRK).toString());
-                if (balance < minimum) continue;
-                const pct = balance * BigInt(c.SELL_PERCENT.gt(100) ? 100 : c.SELL_PERCENT.toString()) / 100n;
-                const amount = matching ? BigInt(best.buyAmount) : pct > minimum ? pct : minimum;
-                if (amount > balance) continue;
-                const target = matching ? q.getTxRatio(best.sell, bn(best.sellAmount), bn(best.buyAmount))
-                    : q.getBestRatio(sell, open.length ? open : [hist.at(-1)]);
-                const gap = counter > 0 && knife.sell === sell
-                    ? c.TRADE_DIFFERENCE_1000.mul(1 + c.FALLING_KNIFE_STRENGTH * counter) : c.TRADE_DIFFERENCE_1000;
-                const data = await q.getQuote(sell, bn(amount), { address: 'offline' }, {}, target,
-                    best, open, bn(options.failedFees), bn(maxFee), gap, trendGap);
-                if (!data?.quote) continue;
+                const plan = plans[sell];
+                if (!current[sell] || !plan) continue;
+                const memo = `${sell}|${current[sell]}|${counter}`;
+                if (rejected.has(memo)) continue;
+                const gap = gapFor(plan, sell, counter);
+                const data = await q.getQuote(sell, plan.amount, { address: 'offline' }, {}, plan.target,
+                    best, open, failedFees, maxFee, gap, trendGap);
+                if (!data?.quote) { rejected.add(memo); continue; }
                 const sa = BigInt(data.quote.sellAmount);
-                const buy = BigInt(data.quote.buyAmount) * BigInt(1000000 - Math.round(options.fillLoss * 1e6)) / 1000000n;
+                const buy = BigInt(data.quote.buyAmount) * fillFactor / 1000000n;
                 const nextEth = eth + (sell === 'eth' ? -sa : buy);
                 const nextStrk = strk + (sell === 'eth' ? buy - gas : -sa - gas);
                 if (nextEth < 0n || nextStrk < 0n) continue;
@@ -178,7 +211,15 @@ async function replay(trades, rows, options) {
             }
         }
         const m = markRatio(current);
-        minVsHold = Math.min(minVsHold, (units(eth) + units(strk) / m) / (units(initialEth) + units(initialStrk) / m));
+        const vsHold = (units(eth) + units(strk) / m) / (holdEth + holdStrk / m);
+        if (vsHold < minVsHold) {
+            minVsHold = vsHold;
+            worstVsHoldHours = (current.ts - rows[0].ts) / HOUR;
+        }
+        if (vsHold > maxVsHold) {
+            maxVsHold = vsHold;
+            bestVsHoldHours = (current.ts - rows[0].ts) / HOUR;
+        }
         minEth = Math.min(minEth, units(eth));
     }
     const m = markRatio(rows.at(-1));
@@ -187,18 +228,56 @@ async function replay(trades, rows, options) {
     return { options: settings, opens: events.filter(t => !t.close).length, closes: events.filter(t => t.close).length,
         newPositionsLeft: hist.filter(t => !seedHashes.has(t.hash) && !t.matchedBy).length,
         eth: units(eth), strk: units(strk), minEth, excessETH: value - hold,
-        vsHoldPercent: (value / hold - 1) * 100, worstVsHoldPercent: (minVsHold - 1) * 100, events };
+        vsHoldPercent: (value / hold - 1) * 100, worstVsHoldPercent: (minVsHold - 1) * 100,
+        bestVsHoldPercent: (maxVsHold - 1) * 100, worstVsHoldHours, bestVsHoldHours, events };
+}
+
+const sortColumns = {
+    setup: 'name', opens: 'opens', closes: 'closes', newPositionsLeft: 'newPositionsLeft',
+    excessETH: 'excessETH', deltaVsCurrentETH: 'deltaVsCurrentETH', vsHold: 'vsHoldPercent',
+    worstVsHold: 'worstVsHoldPercent', bestVsHold: 'bestVsHoldPercent', minETH: 'minEth'
+};
+
+function sortOptions(column = 'bestVsHold', order = 'desc') {
+    if (!Object.hasOwn(sortColumns, column))
+        throw new Error(`--sort-by must be one of: ${Object.keys(sortColumns).join(', ')}`);
+    if (!['asc', 'desc'].includes(order)) throw new Error('--sort-order must be asc or desc');
+    return { column, order };
+}
+
+function sortResults(results, column = 'bestVsHold', order = 'desc') {
+    sortOptions(column, order);
+    const baseline = results.find(r => r.name === 'current');
+    if (!baseline) throw new Error('Cannot rank results without the current setup baseline');
+    const key = sortColumns[column], direction = order === 'asc' ? 1 : -1;
+    return results.map(r => ({ ...r, deltaVsCurrentETH: r.excessETH - baseline.excessETH }))
+        .sort((a, b) => direction * (key === 'name' ? a[key].localeCompare(b[key]) : a[key] - b[key]));
 }
 
 function comparisonCases(suite, decayHours) {
     const cases = [{ name: 'current', decayHours: 0 }, { name: `decay ${decayHours}h`, decayHours }];
     if (suite === 'basic') return cases;
-    if (suite !== 'extended') throw new Error('--suite must be basic or extended');
+    if (suite === 'matrix') {
+        const defaults = localRequire('./conts');
+        const unique = values => [...new Set(values)];
+        const matrix = [];
+        for (const knifeStrength of unique([defaults.FALLING_KNIFE_STRENGTH, 1]))
+            for (const buybackCap of unique([defaults.FALLING_KNIFE_BUYBACK_CAP, 1]))
+                for (const sellPercent of unique([defaults.SELL_PERCENT.toNumber(), 5, 10]))
+                    for (const hours of unique([0, decayHours, 0.5, 1, 2, 4, 6, 12, 24]))
+                        matrix.push({
+                            name: matrix.length === 0 ? 'current'
+                                : `knife ${knifeStrength} / BB ${buybackCap} / size ${sellPercent}% / decay ${hours}h`,
+                            knifeStrength, buybackCap, sellPercent, decayHours: hours
+                        });
+        return matrix;
+    }
+    if (suite !== 'extended') throw new Error('--suite must be basic, extended or matrix');
     cases.push(
         { name: 'knife +0.5pp', decayHours: 0, knifeStrength: 1 },
         { name: 'base buyback only', decayHours: 0, buybackCap: 1 },
         ...[5, 10].map(sellPercent => ({ name: `size ${sellPercent}%`, decayHours: 0, sellPercent })),
-        ...[2, 4, 6, 12, 24].filter(h => h !== decayHours).map(h => ({ name: `decay ${h}h`, decayHours: h })),
+        ...[0.5, 1, 2, 4, 6, 12, 24].filter(h => h !== decayHours).map(h => ({ name: `decay ${h}h`, decayHours: h })),
         { name: `+0.5pp / decay ${decayHours}h`, decayHours, knifeStrength: 1 },
         { name: `base BB / decay ${decayHours}h`, decayHours, buybackCap: 1 },
         { name: '+0.5pp / base BB', decayHours: 0, knifeStrength: 1, buybackCap: 1 },
@@ -209,14 +288,65 @@ function comparisonCases(suite, decayHours) {
     return cases;
 }
 
+async function runCases(trades, rows, common, cases, workers, onStart = () => {}) {
+    if (!Number.isSafeInteger(workers) || workers < 1) throw new Error('--workers must be a positive integer');
+    const results = new Array(cases.length);
+    if (workers === 1 || cases.length < 2) {
+        for (const [index, candidate] of cases.entries()) {
+            onStart(candidate, index);
+            results[index] = { name: candidate.name, ...await replay(trades, rows, { ...common, ...candidate }) };
+        }
+        return results;
+    }
+    const pool = [];
+    let next = 0, completed = 0;
+    try {
+        await new Promise((resolve, reject) => {
+            function dispatch(worker) {
+                if (next === cases.length) return;
+                const index = next++;
+                try {
+                    onStart(cases[index], index);
+                    worker.postMessage({ index, candidate: cases[index] });
+                } catch (error) {
+                    reject(error);
+                }
+            }
+            for (let i = 0; i < Math.min(workers, cases.length); i++) {
+                const worker = new Worker(__filename, { workerData: { trades, rows, common } });
+                pool.push(worker);
+                worker.once('error', reject);
+                worker.once('exit', code => reject(new Error(`Replay worker exited unexpectedly (code ${code})`)));
+                worker.on('message', message => {
+                    if (message.error) {
+                        reject(new Error(`Replay "${cases[message.index].name}" failed: ${message.error}`));
+                        return;
+                    }
+                    results[message.index] = { name: cases[message.index].name, ...message.result };
+                    if (++completed === cases.length) resolve();
+                    else dispatch(worker);
+                });
+                dispatch(worker);
+            }
+        });
+        return results;
+    } finally {
+        await Promise.all(pool.map(worker => worker.terminate()));
+    }
+}
+
 function args(argv) {
     const result = {};
-    const known = new Set(['suite', 'quotes', 'trades', 'out', 'from', 'to', 'decay-hours', 'gas-strk', 'slippage', 'fill-loss', 'cooldown', 'failed-fees-strk']);
-    for (let i = 0; i < argv.length; i += 2) {
+    const known = new Set(['suite', 'workers', 'sort-by', 'sort-order', 'quotes', 'trades', 'out', 'from', 'to', 'decay-hours', 'gas-strk', 'slippage', 'fill-loss', 'cooldown', 'failed-fees-strk']);
+    for (let i = 0; i < argv.length; i++) {
         const key = argv[i].replace(/^--/, '');
+        if (argv[i] === '--save') {
+            result.save = true;
+            continue;
+        }
         if (!argv[i].startsWith('--') || !known.has(key) || !argv[i + 1] || argv[i + 1].startsWith('--'))
             throw new Error(`Unknown option or missing value: ${argv[i]}`);
-        result[key] = argv[i + 1];
+        result[key] = argv[++i];
     }
     return result;
 }
@@ -225,12 +355,17 @@ async function main(argv) {
     if (argv.includes('--help')) {
         console.log('Offline current vs decay replay. Run using npm run replay-quotes-prod -- [options]\n'
             + '--quotes DIR --trades FILE --out FILE --from ISO_TIME --to ISO_TIME\n'
+            + '--save (save a timestamped JSON report; --out FILE also enables saving; default table only)\n'
             + '--decay-hours 6 --gas-strk 0.23 --slippage 0.003 --fill-loss 0 --cooldown 20 --failed-fees-strk 0\n'
-            + '--suite basic|extended (default basic; extended adds knife, buyback, size and decay comparisons)\n'
+            + '--suite basic|extended|matrix (default basic; matrix tests every setting combination)\n'
+            + '--workers N (default up to 4, leaving one available CPU free; 1 runs sequentially)\n'
+            + `--sort-by ${Object.keys(sortColumns).join('|')} (default bestVsHold)\n`
+            + '--sort-order asc|desc (default desc; applies to table and JSON)\n'
             + 'Fractions: 0.003 = 0.3%. Times require Z or an explicit UTC offset. No live data is modified.');
         return;
     }
     const a = args(argv);
+    const sorting = sortOptions(a['sort-by'], a['sort-order']);
     const numeric = (key, fallback, max = Infinity) => {
         const n = Number(a[key] ?? fallback);
         if (!Number.isFinite(n) || n < 0 || n > max) throw new Error(`Invalid --${key}`);
@@ -248,8 +383,9 @@ async function main(argv) {
     if (rows.length < 2) throw new Error('Selected window has fewer than two quotes');
     const tradePath = a.trades || process.env.TRADE_FILE;
     if (!tradePath) throw new Error('Set TRADE_FILE or pass --trades');
-    const out = path.resolve(a.out || path.join(root, 'data', `quote-replay-${Date.now()}.json`));
-    if (out === path.resolve(tradePath) || path.extname(out) !== '.json' || fs.existsSync(out))
+    const out = a.save || a.out
+        ? path.resolve(a.out || path.join(root, 'data', `quote-replay-${Date.now()}.json`)) : undefined;
+    if (out && (out === path.resolve(tradePath) || path.extname(out) !== '.json' || fs.existsSync(out)))
         throw new Error('Output exists or is unsafe. Pass --out with a new JSON filename.');
     const trades = JSON.parse(fs.readFileSync(tradePath, 'utf8'));
     const common = {
@@ -260,30 +396,31 @@ async function main(argv) {
     const decayHours = numeric('decay-hours', 6);
     if (decayHours === 0) throw new Error('--decay-hours must be positive');
     const cases = comparisonCases(a.suite || 'basic', decayHours);
+    const workers = numeric('workers', Math.min(4, Math.max(1, availableParallelism() - 1)));
     console.log(`Replaying ${rows.length} rows: ${new Date(rows[0].ts).toISOString()} to ${new Date(rows.at(-1).ts).toISOString()}`);
     console.warn('Indicative replay: fixed gas/slippage; size-independent re-quotes; hourly trend refresh; no failed executions.\n'
         + 'Keep a complete trade-history snapshot: archiving old trades can invalidate historical seeds.');
-    const results = [];
-    for (const candidate of cases) {
-        console.log(`Running ${results.length + 1}/${cases.length}: ${candidate.name}`);
-        const result = await replay(trades, rows, { ...common, ...candidate });
-        results.push({ name: candidate.name, ...result });
-    }
+    const completed = await runCases(trades, rows, common, cases, workers, (candidate, index) => {
+        console.log(`Running ${index + 1}/${cases.length}: ${candidate.name}`);
+    });
+    const results = sortResults(completed, sorting.column, sorting.order);
     const missing = { strk: rows.filter(r => !r.strk).length, eth: rows.filter(r => !r.eth).length };
     const gaps = rows.slice(1).filter((r, i) => r.ts - rows[i].ts > 60000).length;
     if (gaps || missing.strk || missing.eth || source.incompleteLines)
         console.warn('Coverage warnings:', { gapsOver60s: gaps, missing, ignoredIncompleteTrailingLines: source.incompleteLines });
     console.table(results.map(r => ({
-        setup: r.name, opens: r.opens, closes: r.closes,
-        newPositionsLeft: r.newPositionsLeft, excessETH: r.excessETH.toFixed(6),
-        deltaVsCurrentETH: (r.excessETH - results[0].excessETH).toFixed(6),
+        setup: r.name, 'o/c/n': `${r.opens}/${r.closes}/${r.newPositionsLeft}`,
+        deltaVsCurrentETH: r.deltaVsCurrentETH.toFixed(6),
         vsHold: r.vsHoldPercent.toFixed(4) + '%',
-        worstVsHold: r.worstVsHoldPercent.toFixed(4) + '%', minETH: r.minEth.toFixed(4)
+        worstVsHold: `${r.worstVsHoldPercent.toFixed(4)}% (${r.worstVsHoldHours.toFixed(2)}h)`,
+        bestVsHold: `${r.bestVsHoldPercent.toFixed(4)}% (${r.bestVsHoldHours.toFixed(2)}h)`,
+        minETH: r.minEth.toFixed(4)
     })));
+    if (!out) return;
     const report = {
         start: new Date(rows[0].ts).toISOString(), end: new Date(rows.at(-1).ts).toISOString(),
         rows: rows.length, files: source.files, tradePath: path.resolve(tradePath), missing, gapsOver60s: gaps,
-        assumptions: common,
+        assumptions: common, sorting,
         constants: Object.fromEntries(Object.entries(localRequire('./conts')).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])),
         actualTrades: trades.filter(t => t.timestamp >= rows[0].ts && t.timestamp <= rows.at(-1).ts)
             .map(t => ({ timestamp: t.timestamp, sell: t.sell, hash: t.hash })),
@@ -295,5 +432,16 @@ async function main(argv) {
     console.log(`Saved ${out}`);
 }
 
-module.exports = { loadRows, seedHistory, effectiveCounter, replay, args, comparisonCases };
-if (require.main === module) main(process.argv.slice(2)).catch(e => { console.error(e.message); process.exitCode = 1; });
+module.exports = { loadRows, seedHistory, effectiveCounter, replay, args, comparisonCases, runCases, sortResults };
+if (!isMainThread && require.main === module) {
+    parentPort.on('message', async ({ index, candidate }) => {
+        try {
+            const result = await replay(workerData.trades, workerData.rows, { ...workerData.common, ...candidate });
+            parentPort.postMessage({ index, result });
+        } catch (error) {
+            parentPort.postMessage({ index, error: error.message });
+        }
+    });
+} else if (require.main === module) {
+    main(process.argv.slice(2)).catch(e => { console.error(e.message); process.exitCode = 1; });
+}
