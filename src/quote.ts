@@ -1,11 +1,13 @@
 import { AvnuOptions, Quote, QuoteRequest, getQuotes } from "@avnu/avnu-sdk"
 import { BigNumber } from "@ethersproject/bignumber"
 import { Account } from "starknet"
-import { FALLING_KNIFE_BUYBACK_CAP, FALLING_KNIFE_MATCH_COUNT, FALLING_KNIFE_TX_COUNT, MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_1000, TREND_GAP_MOVE_1000 } from "./conts"
+import { FALLING_KNIFE_BUYBACK_CAP, FALLING_KNIFE_DECAY_HOURS, FALLING_KNIFE_MATCH_COUNT, FALLING_KNIFE_TX_COUNT, MIN_GAS_FEES, TIP_FEE_STRK, TRADE_DIFFERENCE_1000, TREND_GAP_MOVE_1000 } from "./conts"
 import { EthOrStrk, QuoteData, TxData } from "./types"
 import { applyRatio, getRatio } from "./math"
 import { applyTrendGap, TrendGap } from "./trendGap"
 import { recordQuoteRatio } from "./quoteLog"
+import { effectiveCounter, getLastOpeningTimestamp } from "./fallingKnife"
+export { effectiveCounter, getLastOpeningTimestamp } from "./fallingKnife"
 
 // opening gap for a quote: the trend gap compares the quote's market ratio (before our fee deduction) with the trend reference
 function getOpenDifference(sell: EthOrStrk, quote: Quote, openDifference: BigNumber, trendGap?: TrendGap): BigNumber {
@@ -186,13 +188,15 @@ function checkQuote(sell: EthOrStrk, quote: Quote, ratio: BigNumber, tx: TxData,
 // again after a busy balanced phase while open trades keep escalating it through a long down trend.
 // counter = unmatched - matched; above 0 we are in a down trend and the opening gap for the next trade in that
 // direction becomes TRADE_DIFFERENCE_1000 * (1 + FALLING_KNIFE_STRENGTH * counter)
-export function getFallingKnife(transactions: TxData[]): { sell?: EthOrStrk, counter: number } {
+export function getFallingKnife(transactions: TxData[], now = Date.now(), decayHours = FALLING_KNIFE_DECAY_HOURS): { sell?: EthOrStrk, counter: number } {
     const recent = transactions.filter((t) => t.hash !== 'initial' && t.sell)
     const unMatched = recent.slice(-FALLING_KNIFE_TX_COUNT).filter((t) => !t.matchedBy)
     const sell = unMatched[0]?.sell
     if (!sell) return { counter: 0 }
     const matched = recent.slice(-FALLING_KNIFE_MATCH_COUNT).filter((t) => t.matchedBy && t.sell !== sell).length
-    return { sell, counter: unMatched.length - matched }
+    const raw = unMatched.length - matched
+    const lastOpening = decayHours > 0 && raw > 0 ? getLastOpeningTimestamp(recent, now) : 0
+    return { sell, counter: effectiveCounter(raw, now, lastOpening, decayHours) }
 }
 
 // gain (per mille) needed to counter trade the given trades: TRADE_DIFFERENCE_1000 * the highest falling-knife

@@ -35,7 +35,7 @@ Used tech / Prerequisites:
 - MIN_SEL_AMOUNT_ETH - min amount of eth to sell (if sell percent is lower we use this amount, if not enough balance in wallet we don't trade)
 - MIN_SEL_AMOUNT_STRK - min amount of strk to sell
 - TRADE_DIFFERENCE_1000 - difference needed for a good trade in 10th of a percent
-- Falling knife (no setting): `counter = still-unmatched trades within the last 40 transactions - matched trades within the last 10 transactions that sell the opposite token of the unmatched ones (the counter trades)`. If it is > 0, a new trade in that direction needs a ratio gap of `TRADE_DIFFERENCE_1000 * (1 + 2 * counter)` (instead of `TRADE_DIFFERENCE_1000`) and stores `fallingKnifeCounter` in the trade file; its counter trade then needs a gain of `TRADE_DIFFERENCE_1000 * min(fallingKnifeCounter, 2)` (combined counter trades use the highest counter of the closed trades, trades without a counter count as 1)
+- Falling knife (constants in `src/conts.ts`): the raw counter is `still-unmatched trades within the last 40 transactions - matched trades within the last 10 transactions that sell the opposite token`. Subtract one point per complete `FALLING_KNIFE_DECAY_HOURS` (currently 4) since the last opening, clamped at zero; 0 hours disables decay. Every new opening resets the clock; closes do not. The clock is reconstructed from trade history after restart, including openings already closed; a latest opening without a timestamp conservatively prevents decay. A positive effective counter raises the opening gap in that direction to `TRADE_DIFFERENCE_1000 * (1 + 2 * counter)` and is stored as `fallingKnifeCounter`. Buybacks do not decay: their target is `TRADE_DIFFERENCE_1000 * max(1, min(storedCounter, FALLING_KNIFE_BUYBACK_CAP))`, currently capped at 1 (base gap), including existing positions. Production uses `SELL_PERCENT=3`.
 - Trend gap (constants `TREND_GAP_*` in `src/conts.ts`, `TREND_GAP_DAYS = 0` disables it): when the ETH/STRK ratio moved more than 10% against the coin a new trade would buy, compared with the median ratio of our trades at least 14 days old, that trade's opening gap is additionally multiplied by `min(6, max(1, 4 * hourly vol / TRADE_DIFFERENCE_1000))` (cap `TREND_GAP_MAX_MULT`, 0 = no cap). The hourly vol comes from our own trades of the last 30 days (steps between trades of the same direction, isolated glitch trades ignored). The other direction and counter trades are unchanged. The trend gap is calculated from the trades in `TRADE_FILE` (ratios cached in memory), so `extract-prod` keeps the trades of the last `TREND_GAP_HISTORY_DAYS` (37) days in the trade file
 - MIN_GAS_FEES - if gas fees fluctuate use to set min gas for logic
 - NODE_RPC - will be used to replace the default node rpc
@@ -71,7 +71,7 @@ Used tech / Prerequisites:
 
 ### Offline quote replay
 
-Compare the current falling-knife settings with a candidate that subtracts one
+Compare the current falling-knife settings (four-hour decay) with a candidate that subtracts one
 counter point per six hours since the last opening. Each new opening resets the
 decay clock; closing credits remain unchanged. This command never connects to the
 wallet, executes transactions or modifies trade/quote files:
@@ -115,10 +115,10 @@ For every combination of these settings, use the matrix suite:
 npm run replay-quotes-prod -- --suite matrix --workers 4
 ```
 
-The matrix combines the configured and reduced knife strengths, configured and
-base-only buyback caps, configured/5%/10% opening sizes, and decay disabled or at
+The matrix combines the configured and reduced knife strengths, buyback caps
+1 and 2 (plus the configured cap), configured/5%/10% opening sizes, and decay disabled or at
 0.5, 1, 2, 4, 6, 12 and 24 hours. `--decay-hours` also adds the chosen interval
-if it is not already present. Duplicate values are removed; with the default
+if it is not already present, as does the configured live decay. Duplicate values are removed; with the default
 settings and six-hour decay this produces 96 cases. The current setup remains
 the baseline for every comparison, regardless of its position after sorting.
 

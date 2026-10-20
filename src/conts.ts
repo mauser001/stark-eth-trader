@@ -10,8 +10,10 @@ export const FALLING_KNIFE_TX_COUNT = 40
 export const FALLING_KNIFE_MATCH_COUNT = 10
 // gap steps each falling-knife counter point adds to the opening gap: gap = TRADE_DIFFERENCE_1000 * (1 + strength * counter)
 export const FALLING_KNIFE_STRENGTH = 2
+// subtract one counter point per interval since the last opening; 0 disables decay
+export const FALLING_KNIFE_DECAY_HOURS = 4
 // cap for the stored counter when it raises the buy-back target (TRADE_DIFFERENCE_1000 * min(counter, cap))
-export const FALLING_KNIFE_BUYBACK_CAP = 2
+export const FALLING_KNIFE_BUYBACK_CAP = 1
 // trend gap: when the eth/strk ratio moved more than TREND_GAP_MOVE_1000 (per mille) against the coin a new trade would buy,
 // compared with the median of our trades at least TREND_GAP_DAYS old, that trade's opening gap is multiplied by
 // max(1, TREND_GAP_VOL_K * hourly vol / TRADE_DIFFERENCE_1000), hourly vol from our trades of the last TREND_GAP_VOL_DAYS days.

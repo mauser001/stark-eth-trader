@@ -12,6 +12,7 @@ const localRequire = createRequire(quoteFile);
 const HOUR = 3600000;
 const units = n => Number(n) / 1e18;
 const bn = n => localRequire('@ethersproject/bignumber').BigNumber.from(n.toString());
+const { effectiveCounter, getLastOpeningTimestamp } = localRequire('./fallingKnife');
 
 function loadRows(dir) {
     const byTimestamp = new Map();
@@ -57,10 +58,6 @@ function seedHistory(trades, ts) {
     return hist;
 }
 
-function effectiveCounter(raw, now, lastOpening, decayHours) {
-    return Math.max(0, raw - (decayHours > 0 ? Math.floor(Math.max(0, now - lastOpening) / (decayHours * HOUR)) : 0));
-}
-
 function markRatio(row) {
     return Number(row.eth && row.strk ? (row.eth + row.strk) / 2n : row.eth || row.strk) / 100000;
 }
@@ -100,7 +97,7 @@ async function replay(trades, rows, options) {
     const seedHashes = new Set(hist.map(t => t.hash));
     let eth = BigInt(hist.at(-1).balanceEth), strk = BigInt(hist.at(-1).balanceStrk);
     const initialEth = eth, initialStrk = strk;
-    let lastOpening = Math.max(0, ...hist.filter(t => t.sell && !t.matchedBy).map(t => t.timestamp || 0));
+    let lastOpening = getLastOpeningTimestamp(hist, rows[0].ts);
     let lastTrade = 0, current, open, best, knife, failedFees, maxFee, points, plans, trendGap, trendKey, trendHour = -1, trendDirty = true;
     let minVsHold = 1, maxVsHold = 1, minEth = units(eth);
     let worstVsHoldHours = 0, bestVsHoldHours = 0;
@@ -130,7 +127,7 @@ async function replay(trades, rows, options) {
     function refresh() {
         open = hist.filter(t => !t.matchedBy && t.sell);
         best = q.getBestTx(open) || hist.at(-1);
-        knife = q.getFallingKnife(hist);
+        knife = q.getFallingKnife(hist, rows[0].ts, 0);
         failedFees = bn(options.failedFees);
         maxFee = bn(hist.slice(-10).reduce((v, t) => t.actualFees && BigInt(t.actualFees) > v ? BigInt(t.actualFees) : v, 0n));
         points = trend.toRatioPoints(hist);
@@ -255,16 +252,16 @@ function sortResults(results, column = 'bestVsHold', order = 'desc') {
 }
 
 function comparisonCases(suite, decayHours) {
-    const cases = [{ name: 'current', decayHours: 0 }, { name: `decay ${decayHours}h`, decayHours }];
+    const defaults = localRequire('./conts');
+    const cases = [{ name: 'current', decayHours: defaults.FALLING_KNIFE_DECAY_HOURS }, { name: `decay ${decayHours}h`, decayHours }];
     if (suite === 'basic') return cases;
     if (suite === 'matrix') {
-        const defaults = localRequire('./conts');
         const unique = values => [...new Set(values)];
         const matrix = [];
         for (const knifeStrength of unique([defaults.FALLING_KNIFE_STRENGTH, 1]))
-            for (const buybackCap of unique([defaults.FALLING_KNIFE_BUYBACK_CAP, 1]))
+            for (const buybackCap of unique([defaults.FALLING_KNIFE_BUYBACK_CAP, 2, 1]))
                 for (const sellPercent of unique([defaults.SELL_PERCENT.toNumber(), 5, 10]))
-                    for (const hours of unique([0, decayHours, 0.5, 1, 2, 4, 6, 12, 24]))
+                    for (const hours of unique([defaults.FALLING_KNIFE_DECAY_HOURS, 0, decayHours, 0.5, 1, 2, 4, 6, 12, 24]))
                         matrix.push({
                             name: matrix.length === 0 ? 'current'
                                 : `knife ${knifeStrength} / BB ${buybackCap} / size ${sellPercent}% / decay ${hours}h`,

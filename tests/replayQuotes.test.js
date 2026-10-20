@@ -184,7 +184,7 @@ test('extended suite covers independent settings and combinations without duplic
     assert(cases.some(c => c.sellPercent === 10 && c.decayHours === 0));
     assert(cases.some(c => c.knifeStrength === 1 && c.buybackCap === 1 && c.sellPercent === 5));
     assert.deepEqual(comparisonCases('basic', 6), [
-        { name: 'current', decayHours: 0 }, { name: 'decay 6h', decayHours: 6 }
+        { name: 'current', decayHours: 4 }, { name: 'decay 6h', decayHours: 6 }
     ]);
     assert.throws(() => comparisonCases('unknown', 6), /--suite/);
 });
@@ -193,7 +193,7 @@ test('matrix suite covers the complete Cartesian product, with current settings 
     const cases = comparisonCases('matrix', 6);
     assert.equal(cases.length, 96);
     assert.deepEqual(cases[0], {
-        name: 'current', knifeStrength: 2, buybackCap: 2, sellPercent: 3, decayHours: 0
+        name: 'current', knifeStrength: 2, buybackCap: 1, sellPercent: 3, decayHours: 4
     });
     const key = c => [c.knifeStrength, c.buybackCap, c.sellPercent, c.decayHours].join('|');
     const keys = new Set(cases.map(key));
@@ -257,7 +257,7 @@ test('matrix CLI writes a complete ordered report and deduplicates configured op
         assert.equal(report.results.length, 64);
         assert.equal(report.results[0].name, 'current');
         assert.equal(report.results[0].options.sellPercent, 5);
-        assert.equal(report.results[0].options.decayHours, 0);
+        assert.equal(report.results[0].options.decayHours, 4);
         const settings = report.results.map(r => [
             r.options.knifeStrength, r.options.buybackCap, r.options.sellPercent, r.options.decayHours
         ].join('|'));
@@ -340,10 +340,31 @@ test('base-only buyback closes inherited knife positions earlier', async () => {
         { ts: t0, strk: 99000000n, eth: 98900000n },
         { ts: t0 + 1000, strk: 99000000n, eth: 98900000n }
     ];
-    const current = await replay(trades, rows, options);
+    const current = await replay(trades, rows, { ...options, buybackCap: 2 });
     const quicker = await replay(trades, rows, { ...options, buybackCap: 1 });
     assert.equal(current.closes, 0);
     assert.equal(quicker.closes, 1);
+});
+
+test('live and replay use the same decayed opening counter and reset it after an opening', async () => {
+    const { getFallingKnife } = require('../dist/quote');
+    const trades = [{ ...seed[0], timestamp: t0 }];
+    const rows = [
+        { ts: t0 + 4 * 3600000 - 1, strk: 101800000n, eth: 101700000n },
+        { ts: t0 + 4 * 3600000, strk: 101800000n, eth: 101700000n },
+        { ts: t0 + 4 * 3600000 + 20000, strk: 101800000n, eth: 101700000n }
+    ];
+    const result = await replay(trades, rows, { ...options, decayHours: 4 });
+    assert.equal(getFallingKnife(trades, rows[0].ts).counter, 1);
+    assert.equal(getFallingKnife(trades, rows[1].ts).counter, 0);
+    assert.equal(result.opens, 1);
+    assert.equal(result.events[0].timestamp, rows[1].ts);
+    assert.equal(result.events[0].counter, 0);
+    assert.equal(result.events[0].gapPerMille, 5);
+    const liveHistory = [...trades, {
+        hash: 'new', sell: 'eth', timestamp: result.events[0].timestamp, status: 'SUCCEEDED'
+    }];
+    assert.equal(getFallingKnife(liveHistory, rows[2].ts).counter, 2);
 });
 
 test('bigger openings use the requested balance percentage and closing size remains position-based', async () => {
