@@ -263,8 +263,7 @@ function comparisonCases(suite, decayHours) {
                 for (const sellPercent of unique([defaults.SELL_PERCENT.toNumber(), 5, 10]))
                     for (const hours of unique([defaults.FALLING_KNIFE_DECAY_HOURS, 0, decayHours, 0.5, 1, 2, 4, 6, 12, 24]))
                         matrix.push({
-                            name: matrix.length === 0 ? 'current'
-                                : `knife ${knifeStrength} / BB ${buybackCap} / size ${sellPercent}% / decay ${hours}h`,
+                            name:`knife ${knifeStrength} / BB ${buybackCap} / size ${sellPercent}% / decay ${hours}h` + (matrix.length === 0 ? '(c)':''),
                             knifeStrength, buybackCap, sellPercent, decayHours: hours
                         });
         return matrix;
