@@ -244,7 +244,7 @@ function sortOptions(column = 'bestVsHold', order = 'desc') {
 
 function sortResults(results, column = 'bestVsHold', order = 'desc') {
     sortOptions(column, order);
-    const baseline = results.find(r => r.name === 'current');
+    const baseline = results.find(r => r.name.includes('(c)'));
     if (!baseline) throw new Error('Cannot rank results without the current setup baseline');
     const key = sortColumns[column], direction = order === 'asc' ? 1 : -1;
     return results.map(r => ({ ...r, deltaVsCurrentETH: r.excessETH - baseline.excessETH }))
