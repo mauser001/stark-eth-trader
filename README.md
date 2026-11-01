@@ -156,10 +156,17 @@ npm run replay-quotes-prod -- --suite matrix --sort-by vsHold
 npm run replay-quotes-prod -- --suite matrix --sort-by newPositionsLeft --sort-order asc
 ```
 
-Numeric sorting uses full precision, not rounded table values. `deltaVsCurrentETH`
-always compares final excess ETH against the current setup, not the top-ranked
-case. The JSON records the sort settings, `bestVsHoldPercent`, and each case's
-`deltaVsCurrentETH`.
+Numeric sorting uses full precision, not rounded table values. Use `--suite current` to
+compare only the current config against `REAL`, and `--start DDMMYY` (e.g. `231026`,
+00:00 UTC) to skip quotes before the day the config was switched.
+The table's first
+row, `REAL`, is the bot's actual result over the same window: it starts from the
+wallet balances of the last confirmed trade before the first quote and follows the
+balances recorded by each confirmed real trade. It is the comparison base:
+`deltaVsRealETH` is each simulation's final excess ETH minus the real one (also
+sortable). `deltaVsCurrentETH` compares against the current setup, not the
+top-ranked case. The JSON records the sort settings, `real`, `actualTrades`, and each
+case's `deltaVsRealETH`/`deltaVsCurrentETH`.
 
 Larger opening sizes do not resize inherited positions or their buybacks.
 Because quotes lack amount/depth data, larger-size results are especially

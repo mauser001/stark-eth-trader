@@ -229,9 +229,46 @@ async function replay(trades, rows, options) {
         bestVsHoldPercent: (maxVsHold - 1) * 100, worstVsHoldHours, bestVsHoldHours, events };
 }
 
+// Real bot result over the same window, using the wallet balances recorded by the last confirmed trade
+// before the first quote and every confirmed trade up to the last quote. This is the comparison base.
+function realResult(trades, rows) {
+    const start = rows[0].ts, end = rows.at(-1).ts;
+    const seed = seedHistory(trades, start).at(-1);
+    const real = trades.filter(t => t.status === 'SUCCEEDED' && t.timestamp >= start && t.timestamp <= end)
+        .sort((a, b) => a.timestamp - b.timestamp);
+    if (real.some(t => t.balanceEth == null || t.balanceStrk == null)) throw new Error('Real trade without wallet balances');
+    const closedBy = new Set(trades.filter(t => t.status === 'SUCCEEDED' && t.timestamp <= end && t.matchedBy).map(t => t.matchedBy));
+    const holdEth = units(BigInt(seed.balanceEth)), holdStrk = units(BigInt(seed.balanceStrk));
+    let eth = holdEth, strk = holdStrk, next = 0, minEth = eth;
+    let minVsHold = 1, maxVsHold = 1, worstVsHoldHours = 0, bestVsHoldHours = 0;
+    for (const row of rows) {
+        while (next < real.length && real[next].timestamp <= row.ts) {
+            eth = units(BigInt(real[next].balanceEth));
+            strk = units(BigInt(real[next].balanceStrk));
+            minEth = Math.min(minEth, eth);
+            next++;
+        }
+        const m = markRatio(row);
+        const vsHold = (eth + strk / m) / (holdEth + holdStrk / m);
+        if (vsHold < minVsHold) { minVsHold = vsHold; worstVsHoldHours = (row.ts - start) / HOUR; }
+        if (vsHold > maxVsHold) { maxVsHold = vsHold; bestVsHoldHours = (row.ts - start) / HOUR; }
+    }
+    const m = markRatio(rows.at(-1));
+    const hold = holdEth + holdStrk / m, value = eth + strk / m;
+    // Both sides of a pair carry matchedBy, so only a trade pointing back at an earlier trade is a close.
+    const timestamps = new Map(trades.map(t => [t.hash, t.timestamp]));
+    const isClose = t => t.matchedBy && timestamps.get(t.matchedBy) < t.timestamp;
+    const events = real.map(t => ({ timestamp: t.timestamp, utc: new Date(t.timestamp).toISOString(), sell: t.sell,
+        close: !!isClose(t), hash: t.hash, eth: units(BigInt(t.balanceEth)), strk: units(BigInt(t.balanceStrk)) }));
+    return { name: 'REAL', opens: events.filter(e => !e.close).length, closes: events.filter(e => e.close).length,
+        newPositionsLeft: real.filter(t => !t.matchedBy && !closedBy.has(t.hash)).length, eth, strk, minEth,
+        excessETH: value - hold, vsHoldPercent: (value / hold - 1) * 100, worstVsHoldPercent: (minVsHold - 1) * 100,
+        bestVsHoldPercent: (maxVsHold - 1) * 100, worstVsHoldHours, bestVsHoldHours, events };
+}
+
 const sortColumns = {
     setup: 'name', opens: 'opens', closes: 'closes', newPositionsLeft: 'newPositionsLeft',
-    excessETH: 'excessETH', deltaVsCurrentETH: 'deltaVsCurrentETH', vsHold: 'vsHoldPercent',
+    excessETH: 'excessETH', deltaVsRealETH: 'deltaVsRealETH', deltaVsCurrentETH: 'deltaVsCurrentETH', vsHold: 'vsHoldPercent',
     worstVsHold: 'worstVsHoldPercent', bestVsHold: 'bestVsHoldPercent', minETH: 'minEth'
 };
 
@@ -242,18 +279,21 @@ function sortOptions(column = 'bestVsHold', order = 'desc') {
     return { column, order };
 }
 
-function sortResults(results, column = 'bestVsHold', order = 'desc') {
+function sortResults(results, column = 'bestVsHold', order = 'desc', real) {
     sortOptions(column, order);
-    const baseline = results.find(r => r.name.includes('(c)'));
+    const baseline = results.find(r => r.name.includes('(c)') || r.name === 'current');
     if (!baseline) throw new Error('Cannot rank results without the current setup baseline');
+    if (column === 'deltaVsRealETH' && !real) throw new Error('--sort-by deltaVsRealETH needs real trades');
     const key = sortColumns[column], direction = order === 'asc' ? 1 : -1;
-    return results.map(r => ({ ...r, deltaVsCurrentETH: r.excessETH - baseline.excessETH }))
+    return results.map(r => ({ ...r, deltaVsCurrentETH: r.excessETH - baseline.excessETH,
+        ...(real ? { deltaVsRealETH: r.excessETH - real.excessETH } : {}) }))
         .sort((a, b) => direction * (key === 'name' ? a[key].localeCompare(b[key]) : a[key] - b[key]));
 }
 
 function comparisonCases(suite, decayHours) {
     const defaults = localRequire('./conts');
     const cases = [{ name: 'current', decayHours: defaults.FALLING_KNIFE_DECAY_HOURS }, { name: `decay ${decayHours}h`, decayHours }];
+    if (suite === 'current') return cases.slice(0, 1);
     if (suite === 'basic') return cases;
     if (suite === 'matrix') {
         const unique = values => [...new Set(values)];
@@ -268,7 +308,7 @@ function comparisonCases(suite, decayHours) {
                         });
         return matrix;
     }
-    if (suite !== 'extended') throw new Error('--suite must be basic, extended or matrix');
+    if (suite !== 'extended') throw new Error('--suite must be current, basic, extended or matrix');
     cases.push(
         { name: 'knife +0.5pp', decayHours: 0, knifeStrength: 1 },
         { name: 'base buyback only', decayHours: 0, buybackCap: 1 },
@@ -333,7 +373,7 @@ async function runCases(trades, rows, common, cases, workers, onStart = () => {}
 
 function args(argv) {
     const result = {};
-    const known = new Set(['suite', 'workers', 'sort-by', 'sort-order', 'quotes', 'trades', 'out', 'from', 'to', 'decay-hours', 'gas-strk', 'slippage', 'fill-loss', 'cooldown', 'failed-fees-strk']);
+    const known = new Set(['suite', 'workers', 'sort-by', 'sort-order', 'quotes', 'trades', 'out', 'from', 'to', 'start', 'decay-hours', 'gas-strk', 'slippage', 'fill-loss', 'cooldown', 'failed-fees-strk']);
     for (let i = 0; i < argv.length; i++) {
         const key = argv[i].replace(/^--/, '');
         if (argv[i] === '--save') {
@@ -353,7 +393,9 @@ async function main(argv) {
             + '--quotes DIR --trades FILE --out FILE --from ISO_TIME --to ISO_TIME\n'
             + '--save (save a timestamped JSON report; --out FILE also enables saving; default table only)\n'
             + '--decay-hours 6 --gas-strk 0.23 --slippage 0.003 --fill-loss 0 --cooldown 20 --failed-fees-strk 0\n'
-            + '--suite basic|extended|matrix (default basic; matrix tests every setting combination)\n'
+            + '--start DDMMYY (first day to replay, 00:00 UTC, e.g. 231026; later of --from and --start wins)\n'
+            + '--suite current|basic|extended|matrix (default basic; current = only the current config vs REAL;\n'
+            + '  matrix tests every setting combination)\n'
             + '--workers N (default up to 4, leaving one available CPU free; 1 runs sequentially)\n'
             + `--sort-by ${Object.keys(sortColumns).join('|')} (default bestVsHold)\n`
             + '--sort-order asc|desc (default desc; applies to table and JSON)\n'
@@ -373,7 +415,16 @@ async function main(argv) {
             throw new Error(`--${key} needs an ISO timestamp with timezone`);
         return Date.parse(a[key]);
     };
-    const from = time('from'), to = time('to');
+    let start;
+    if (a.start) {
+        const m = /^(\d{2})(\d{2})(\d{2})$/.exec(a.start);
+        const day = m && Date.UTC(2000 + +m[3], +m[2] - 1, +m[1]);
+        if (!m || new Date(day).getUTCDate() !== +m[1] || new Date(day).getUTCMonth() !== +m[2] - 1)
+            throw new Error('--start needs a valid DDMMYY date, e.g. 231026');
+        start = day;
+    }
+    const explicitFrom = time('from'), to = time('to');
+    const from = start === undefined ? explicitFrom : Math.max(start, explicitFrom ?? start);
     const source = loadRows(a.quotes || process.env.QUOTE_LOG_DIR || path.join(root, 'data', 'quote_logs'));
     const rows = source.rows.filter(r => (from === undefined || r.ts >= from) && (to === undefined || r.ts <= to));
     if (rows.length < 2) throw new Error('Selected window has fewer than two quotes');
@@ -399,14 +450,16 @@ async function main(argv) {
     const completed = await runCases(trades, rows, common, cases, workers, (candidate, index) => {
         console.log(`Running ${index + 1}/${cases.length}: ${candidate.name}`);
     });
-    const results = sortResults(completed, sorting.column, sorting.order);
+    const real = realResult(trades, rows);
+    const results = sortResults(completed, sorting.column, sorting.order, real);
     const missing = { strk: rows.filter(r => !r.strk).length, eth: rows.filter(r => !r.eth).length };
     const gaps = rows.slice(1).filter((r, i) => r.ts - rows[i].ts > 60000).length;
     if (gaps || missing.strk || missing.eth || source.incompleteLines)
         console.warn('Coverage warnings:', { gapsOver60s: gaps, missing, ignoredIncompleteTrailingLines: source.incompleteLines });
-    console.table(results.map(r => ({
+    console.table([real, ...results].map(r => ({
         setup: r.name, 'o/c/n': `${r.opens}/${r.closes}/${r.newPositionsLeft}`,
-        deltaVsCurrentETH: r.deltaVsCurrentETH.toFixed(6),
+        deltaVsRealETH: (r.deltaVsRealETH ?? 0).toFixed(6),
+        deltaVsCurrentETH: r.deltaVsCurrentETH === undefined ? '' : r.deltaVsCurrentETH.toFixed(6),
         vsHold: r.vsHoldPercent.toFixed(4) + '%',
         worstVsHold: `${r.worstVsHoldPercent.toFixed(4)}% (${r.worstVsHoldHours.toFixed(2)}h)`,
         bestVsHold: `${r.bestVsHoldPercent.toFixed(4)}% (${r.bestVsHoldHours.toFixed(2)}h)`,
@@ -418,8 +471,7 @@ async function main(argv) {
         rows: rows.length, files: source.files, tradePath: path.resolve(tradePath), missing, gapsOver60s: gaps,
         assumptions: common, sorting,
         constants: Object.fromEntries(Object.entries(localRequire('./conts')).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])),
-        actualTrades: trades.filter(t => t.timestamp >= rows[0].ts && t.timestamp <= rows.at(-1).ts)
-            .map(t => ({ timestamp: t.timestamp, sell: t.sell, hash: t.hash })),
+        actualTrades: real.events, real: { ...real, events: undefined },
         results
     };
     fs.mkdirSync(path.dirname(out), { recursive: true });
@@ -428,7 +480,7 @@ async function main(argv) {
     console.log(`Saved ${out}`);
 }
 
-module.exports = { loadRows, seedHistory, effectiveCounter, replay, args, comparisonCases, runCases, sortResults };
+module.exports = { loadRows, seedHistory, effectiveCounter, replay, realResult, args, comparisonCases, runCases, sortResults };
 if (!isMainThread && require.main === module) {
     parentPort.on('message', async ({ index, candidate }) => {
         try {
