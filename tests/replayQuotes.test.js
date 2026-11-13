@@ -9,7 +9,7 @@ Object.assign(process.env, {
     SELL_PERCENT: '3', TRADE_DIFFERENCE_1000: '5', MIN_SEL_AMOUNT_ETH: '1000000000000000',
     MIN_SEL_AMOUNT_STRK: '5000000000000000000', MIN_GAS_FEES: '1000000000000000000', TIP: '0'
 });
-const { loadRows, seedHistory, effectiveCounter, replay, args, comparisonCases, runCases, sortResults } = require('../scripts/replayQuotes.cjs');
+const { loadRows, seedHistory, effectiveCounter, initialRatioFilter, replay, args, comparisonCases, runCases, sortResults } = require('../scripts/replayQuotes.cjs');
 const wad = n => (BigInt(n) * 10n ** 18n).toString();
 const t0 = Date.UTC(2026, 9, 17);
 const seed = [{
@@ -17,6 +17,32 @@ const seed = [{
     sellAmount: wad(1), buyAmount: wad(1000), balanceEth: wad(10), balanceStrk: wad(2000)
 }];
 const options = { gas: .23, slippage: .003, fillLoss: 0, cooldown: 20, failedFees: '0', decayHours: 6 };
+
+test('initial quote rejection matches production ratio checks at rounding boundaries', () => {
+    const { BigNumber } = require('@ethersproject/bignumber');
+    const { getTxRatio, isGoodRatio } = require('../dist/quote');
+    for (const sell of ['eth', 'strk']) {
+        for (const amount of [1n, 1234567n, 1000000000000000000n]) {
+            for (const ratio of [99999n, 100000n, 100001n, 100000001n]) {
+                const buy = sell === 'eth' ? amount * ratio / 100000n : amount * 100000n / ratio;
+                if (sell === 'strk' && buy === 0n) {
+                    assert.equal(initialRatioFilter(sell, amount, 1n, 100000n)(ratio), true);
+                    continue;
+                }
+                const tradeRatio = getTxRatio(sell, BigNumber.from(amount.toString()), BigNumber.from(buy.toString()));
+                const value = BigInt(tradeRatio.toString());
+                for (const target of [value > 0n ? value - 1n : 0n, value, value + 1n]) {
+                    assert.equal(initialRatioFilter(sell, amount, target, 100000n)(ratio),
+                        isGoodRatio(sell, BigNumber.from(target.toString()), tradeRatio));
+                }
+            }
+        }
+    }
+    assert.equal(initialRatioFilter('eth', 0n, 1n, 100000n)(100000n), true);
+    assert.equal(initialRatioFilter('eth', 1n, undefined, 100000n)(100000n), true);
+    assert.equal(initialRatioFilter('eth', 1n, -1n, 100000n)(100000n), true);
+    assert.equal(initialRatioFilter('strk', 1n, 0n, 100000n)(100001n), true);
+});
 
 test('counter decay relaxes slowly, clamps at zero and re-arms after an opening', () => {
     const hour = 3600000;

@@ -128,6 +128,8 @@ Use `--workers N` to control the pool or `--workers 1` to run sequentially.
 Each worker holds its own copy of the input data, so reduce the worker count
 for large histories or limited memory. Quote rows within each case always run
 sequentially. Tied results retain suite order regardless of worker completion order.
+The replay skips quotes that cannot pass the production code's initial ratio
+check; all potentially actionable quotes still use the production checks.
 
 The table and JSON results are sorted by `bestVsHold` descending by default:
 the highest sampled wallet value relative to holding the starting assets.

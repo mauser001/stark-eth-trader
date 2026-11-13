@@ -62,6 +62,20 @@ function markRatio(row) {
     return Number(row.eth && row.strk ? (row.eth + row.strk) / 2n : row.eth || row.strk) / 100000;
 }
 
+// Precompute the exact first checkQuote boundary, including quote and ratio rounding.
+// Invalid amounts are left to the production code to report.
+function initialRatioFilter(sell, amount, target, ratioMulti) {
+    if (amount <= 0n || target === undefined || target < 0n || ratioMulti <= 0n) return () => true;
+    if (sell === 'eth') {
+        const minBuy = ((target + 1n) * amount + ratioMulti - 1n) / ratioMulti;
+        const minRatio = (minBuy * 100000n + amount - 1n) / amount;
+        return ratio => ratio >= minRatio;
+    }
+    const zeroBuyAbove = amount * 100000n;
+    const maxRatio = target > 0n ? zeroBuyAbove / (amount * ratioMulti / target + 1n) : 0n;
+    return ratio => ratio <= maxRatio || ratio > zeroBuyAbove;
+}
+
 // Evaluate the compiled production module with only its external quote feed, logging
 // and retry timer replaced. No account/provider or SDK network call is created.
 let quoteScript;
@@ -106,6 +120,7 @@ async function replay(trades, rows, options) {
     const holdEth = units(initialEth), holdStrk = units(initialStrk);
     const fillFactor = BigInt(1000000 - Math.round(options.fillLoss * 1e6));
     const sellPct = BigInt(c.SELL_PERCENT.gt(100) ? 100 : c.SELL_PERCENT.toString());
+    const ratioMulti = BigInt(c.RATIO_MULTI);
     const minimums = { eth: BigInt(c.MIN_SEL_AMOUNT_ETH.toString()), strk: BigInt(c.MIN_SEL_AMOUNT_STRK.toString()) };
     const trendOptions = {
         days: c.TREND_GAP_DAYS, move: c.TREND_GAP_MOVE_1000 / 1000,
@@ -142,7 +157,9 @@ async function replay(trades, rows, options) {
             if (amount > balance) continue;
             const target = matching ? q.getTxRatio(best.sell, bn(best.sellAmount), bn(best.buyAmount))
                 : q.getBestRatio(sell, open.length ? open : [hist.at(-1)]);
-            plans[sell] = { amount: bn(amount), target, gaps: new Map() };
+            const targetRaw = target === undefined ? undefined : BigInt(target.toString());
+            plans[sell] = { amount: bn(amount), target,
+                couldPass: initialRatioFilter(sell, amount, targetRaw, ratioMulti), gaps: new Map() };
         }
         rejected.clear();
         trendDirty = true;
@@ -170,6 +187,7 @@ async function replay(trades, rows, options) {
             for (const sell of ['strk', 'eth']) {
                 const plan = plans[sell];
                 if (!current[sell] || !plan) continue;
+                if (!plan.couldPass(current[sell])) continue;
                 const memo = `${sell}|${current[sell]}|${counter}`;
                 if (rejected.has(memo)) continue;
                 const gap = gapFor(plan, sell, counter);
@@ -480,7 +498,7 @@ async function main(argv) {
     console.log(`Saved ${out}`);
 }
 
-module.exports = { loadRows, seedHistory, effectiveCounter, replay, realResult, args, comparisonCases, runCases, sortResults };
+module.exports = { loadRows, seedHistory, effectiveCounter, initialRatioFilter, replay, realResult, args, comparisonCases, runCases, sortResults };
 if (!isMainThread && require.main === module) {
     parentPort.on('message', async ({ index, candidate }) => {
         try {
